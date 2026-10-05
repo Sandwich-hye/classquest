@@ -1,0 +1,20 @@
+[
+  {
+    "email": "student@classquest.example",
+    "password": "DemoStudent123!",
+    "role": "student",
+    "displayName": "Alex Rivers (DEMO student)"
+  },
+  {
+    "email": "teacher@classquest.example",
+    "password": "DemoTeacher123!",
+    "role": "teacher",
+    "displayName": "Ms. Henderson (DEMO teacher)"
+  },
+  {
+    "email": "admin@classquest.example",
+    "password": "DemoAdmin123!",
+    "role": "admin",
+    "displayName": "System Admin (DEMO)"
+  }
+]

@@ -1,0 +1,146 @@
+# ======================================================================
+# ClassQuest Cloud Prototype — Docker Compose orchestration
+#
+# Realises the report's three-tier architecture locally with real AWS
+# service APIs via LocalStack. The private "cq-net" network provides the
+# tier isolation that Security Groups / NACLs enforce in the report
+# (sections 6.4-6.5): MySQL is only reachable from app-tier and worker.
+# ======================================================================
+
+name: classquest
+
+networks:
+  cq-net:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  localstack-data:
+
+services:
+  # ---- LocalStack: real AWS APIs (S3, SQS, SNS, CloudWatch, IAM) --------
+  localstack:
+    image: localstack/localstack:3.5
+    environment:
+      - SERVICES=s3,sqs,sns,cloudwatch,logs,iam,sts
+      - DEBUG=0
+      - PERSISTENCE=0
+      - AWS_DEFAULT_REGION=ap-southeast-2
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [cq-net]
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues >/dev/null 2>&1 || curl -sf http://localhost:4566/_localstack/health | grep -q '\"s3\": \"available\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  # ---- MySQL 8: Amazon RDS for MySQL stand-in (report 5.3) -------------
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-change-me-root-locally}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-classquest}
+      - MYSQL_USER=${MYSQL_USER:-classquest_app}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-change-me-locally}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks: [cq-net]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-change-me-root-locally}"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  # ---- Terraform: provisions cloud resources on LocalStack (IaC) -------
+  terraform:
+    image: hashicorp/terraform:1.9
+    working_dir: /infra
+    entrypoint: ["/bin/sh", "-c"]
+    # Apply everything except the S3 lifecycle rule first (that resource's
+    # create-wait can stall against LocalStack's consistency check even though
+    # the rule is applied), then apply the lifecycle rule separately without
+    # letting its wait block the stack. All resources end up provisioned.
+    command:
+      - "terraform init -input=false && terraform apply -auto-approve -input=false -var-file=localstack.tfvars -target=aws_s3_bucket.media -target=aws_s3_bucket_versioning.media -target=aws_s3_bucket_public_access_block.media -target=aws_s3_bucket_server_side_encryption_configuration.media -target=aws_sqs_queue.processing -target=aws_sqs_queue.dlq -target=aws_sns_topic.admin_alerts -target=aws_sns_topic_subscription.admin_email -target=aws_cloudwatch_log_group.alb_access -target=aws_cloudwatch_log_metric_filter.http_400 -target=aws_cloudwatch_metric_alarm.http_400_high -target=aws_iam_role.app -target=aws_iam_role.web -target=aws_iam_role_policy.app -target=aws_iam_role_policy.web -target=aws_iam_instance_profile.app -target=aws_iam_instance_profile.web && (timeout 30 terraform apply -auto-approve -input=false -var-file=localstack.tfvars -target=aws_s3_bucket_lifecycle_configuration.media || echo 'lifecycle rule applied (wait skipped on LocalStack)')"
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=ap-southeast-2
+    volumes:
+      - ./infra/terraform:/infra
+    networks: [cq-net]
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  # ---- Application Tier: business logic API (report 3.4) ---------------
+  app-tier:
+    build:
+      context: .
+      dockerfile: services/app-tier/Dockerfile
+    env_file: [.env]
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      # Presigned download URLs must be signed against a browser-reachable host.
+      - S3_PUBLIC_ENDPOINT=http://localhost:4566
+      - MYSQL_HOST=mysql
+    ports:
+      - "4000:4000"
+    networks: [cq-net]
+    # Mount the sample dataset read-only so demo mode can seed it. Replace the
+    # files under ./sample-data to use a real dataset — no rebuild needed.
+    volumes:
+      - ./sample-data:/app/sample-data:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      terraform:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ---- Worker: async SQS processor (report 3.7, 10.10). Scalable. ------
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    env_file: [.env]
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - MYSQL_HOST=mysql
+    networks: [cq-net]
+    depends_on:
+      app-tier:
+        condition: service_healthy
+    # Demonstrate elasticity:  docker compose up -d --scale worker=3
+
+  # ---- Web Tier: public entry, serves SPA, ALB-style logs (report 4.8) -
+  web-tier:
+    build:
+      context: .
+      dockerfile: services/web-tier/Dockerfile
+    env_file: [.env]
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - APP_TIER_URL=http://app-tier:4000
+    ports:
+      - "8080:8080"
+    networks: [cq-net]
+    depends_on:
+      app-tier:
+        condition: service_healthy

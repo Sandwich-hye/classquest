@@ -1,0 +1,17 @@
+{
+  "name": "@classquest/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@classquest/shared": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.15.0"
+  }
+}

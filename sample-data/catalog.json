@@ -1,0 +1,34 @@
+[
+  {
+    "title": "DEMO — Introduction to Algebra (Year 8 Maths)",
+    "type": "document",
+    "contentType": "text/plain",
+    "filename": "intro-to-algebra.txt",
+    "subject": "Mathematics",
+    "yearLevel": "Year 8"
+  },
+  {
+    "title": "DEMO — The Solar System (Year 8 Science)",
+    "type": "document",
+    "contentType": "text/plain",
+    "filename": "solar-system.txt",
+    "subject": "Science",
+    "yearLevel": "Year 8"
+  },
+  {
+    "title": "DEMO — The Giver, Study Guide (Year 9 English)",
+    "type": "book",
+    "contentType": "application/pdf",
+    "filename": "the-giver-study-guide.pdf",
+    "subject": "English",
+    "yearLevel": "Year 9"
+  },
+  {
+    "title": "DEMO — Planetary Orbits (sample video stub)",
+    "type": "video",
+    "contentType": "video/mp4",
+    "filename": "planetary-orbits.mp4",
+    "subject": "Science",
+    "yearLevel": "Year 8"
+  }
+]
