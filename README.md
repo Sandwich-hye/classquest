@@ -23,6 +23,10 @@ any cloud cost**.
 Prerequisites: **Docker Desktop** (with Docker Compose) and **Node.js 20+**
 (Node is only needed to run the automated tests on the host). No AWS account.
 
+> New to the project on Windows? Follow the step-by-step
+> [developer setup guide](./docs/LOCAL_SETUP.md) (PowerShell commands, expected
+> containers, tests and troubleshooting).
+
 **1. Clone and install**
 
 ```bash
@@ -240,6 +244,7 @@ and incurs no cloud cost.
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — design, diagrams, prototype vs production
 - [`DEMO.md`](./DEMO.md) — scripted demonstration
+- [`docs/LOCAL_SETUP.md`](./docs/LOCAL_SETUP.md) — Windows developer setup (PowerShell)
 - [`docs/LOCAL_ACCEPTANCE.md`](./docs/LOCAL_ACCEPTANCE.md) — Windows acceptance checklist
 - [`SECURITY.md`](./SECURITY.md) — controls and known gaps
 - [`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md) — logs, metrics, alerting
