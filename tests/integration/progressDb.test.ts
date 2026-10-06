@@ -24,7 +24,7 @@ if (enabled) {
 }
 
 const shared = await import('../../packages/shared/src/index.js');
-const { migrate, getPool, closePool, userRepo, assetRepo, accessRepo } = shared;
+const { migrate, getPool, closePool, userRepo, assetRepo, accessRepo, withNamedLock, LockTimeoutError } = shared;
 
 describe.skipIf(!enabled)('resource_access (real database)', () => {
   let student = '';
@@ -116,5 +116,28 @@ describe.skipIf(!enabled)('resource_access (real database)', () => {
     const p = await accessRepo.progressFor(student);
     expect(p.opened).toBe(2);
     expect(p.recent.some((r) => r.asset.title === 'pending')).toBe(false);
+  });
+
+  it('withNamedLock serialises concurrent callers and times out cleanly', async () => {
+    const events: string[] = [];
+    const work = (id: string) => async () => {
+      events.push(`start-${id}`);
+      await new Promise((r) => setTimeout(r, 300));
+      events.push(`end-${id}`);
+      return id;
+    };
+    const results = await Promise.all([withNamedLock('cq:test-lock', 5, work('a')), withNamedLock('cq:test-lock', 5, work('b'))]);
+    expect(results.sort()).toEqual(['a', 'b']);
+    // No interleaving: each critical section finishes before the next starts.
+    expect([events[0]!.slice(-1), events[1]!.slice(-1)]).toEqual([events[0]!.slice(-1), events[0]!.slice(-1)]);
+    expect(events[1]!.startsWith('end-')).toBe(true);
+
+    // While one caller holds the lock, a zero-timeout caller gets LockTimeoutError.
+    let release!: () => void;
+    const held = withNamedLock('cq:test-lock', 5, () => new Promise<void>((r) => (release = r)));
+    await new Promise((r) => setTimeout(r, 100));
+    await expect(withNamedLock('cq:test-lock', 0, async () => 'never')).rejects.toBeInstanceOf(LockTimeoutError);
+    release();
+    await held;
   });
 });

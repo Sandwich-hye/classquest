@@ -60,3 +60,13 @@ export function canAccess(role: Role, path: string): boolean {
 export function routeLabel(path: string): string | undefined {
   return Object.values(ROUTES).find((r) => r.path === path)?.label;
 }
+
+/**
+ * Route-guard decision (used by RequireRole): where to send a visitor, or
+ * null to render the route. No session -> /login; wrong role -> that role's
+ * default page. The backend enforces the same rules; this only shapes the UI.
+ */
+export function guardRedirect(role: Role | null, allowed: Role[]): string | null {
+  if (!role) return '/login';
+  return allowed.includes(role) ? null : defaultRouteFor(role);
+}

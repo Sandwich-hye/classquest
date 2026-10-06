@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth';
-import { defaultRouteFor, type Role } from '../navigation';
+import { defaultRouteFor, guardRedirect, type Role } from '../navigation';
 
 /**
  * Route guard.
@@ -13,8 +13,9 @@ import { defaultRouteFor, type Role } from '../navigation';
 export function RequireRole({ roles, children }: { roles: Role[]; children: ReactNode }) {
   const { session } = useAuth();
   const location = useLocation();
-  if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  if (!roles.includes(session.role)) return <Navigate to={defaultRouteFor(session.role)} replace />;
+  const target = guardRedirect(session?.role ?? null, roles);
+  if (target === '/login') return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (target) return <Navigate to={target} replace />;
   return <>{children}</>;
 }
 

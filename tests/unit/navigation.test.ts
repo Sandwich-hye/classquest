@@ -9,6 +9,7 @@ import {
   canAccess,
   isRole,
   routeLabel,
+  guardRedirect,
   ROUTES,
 } from '../../apps/frontend/src/navigation.js';
 import { initialsOf } from '../../apps/frontend/src/components/ui/Avatar.js';
@@ -49,6 +50,26 @@ describe('role navigation', () => {
     expect(isRole(null)).toBe(false);
     expect(routeLabel('/progress')).toBe('My Progress');
     expect(routeLabel('/nope')).toBeUndefined();
+  });
+});
+
+describe('route guard decisions (RequireRole)', () => {
+  const ALL = ['/home', '/library', '/progress', '/dashboard', '/publish', '/operations'];
+  const expected: Record<'student' | 'teacher' | 'admin', Record<string, string | null>> = {
+    student: { '/home': null, '/library': null, '/progress': null, '/dashboard': '/home', '/publish': '/home', '/operations': '/home' },
+    teacher: { '/home': '/dashboard', '/library': null, '/progress': '/dashboard', '/dashboard': null, '/publish': null, '/operations': null },
+    admin: { '/home': '/operations', '/library': null, '/progress': '/operations', '/dashboard': '/operations', '/publish': '/operations', '/operations': null },
+  };
+
+  it.each(['student', 'teacher', 'admin'] as const)('%s: allowed routes render, others redirect to the default page', (role) => {
+    for (const path of ALL) {
+      const route = Object.values(ROUTES).find((r) => r.path === path)!;
+      expect(guardRedirect(role, route.roles), `${role} ${path}`).toBe(expected[role][path]);
+    }
+  });
+
+  it('signed-out visitors are sent to /login from every route', () => {
+    for (const r of Object.values(ROUTES)) expect(guardRedirect(null, r.roles)).toBe('/login');
   });
 });
 

@@ -160,7 +160,7 @@ export function DemoControls({ threshold, onDone }: DemoControlsProps) {
         <Control
           icon="snowflake"
           title="Simulate Glacier lifecycle"
-          demonstrates="Moves up to 10 completed demo resources to the GLACIER storage class now, instead of waiting for the 90-day lifecycle rule. A local simulation; restore is not emulated."
+          demonstrates="Moves up to 10 completed demo resources still in the Standard tier to the GLACIER storage class now, instead of waiting for the 90-day lifecycle rule. A local simulation; restore is not emulated."
           actionLabel="Simulate Glacier tiering"
           variant="accent"
           disruptive
@@ -171,7 +171,7 @@ export function DemoControls({ threshold, onDone }: DemoControlsProps) {
                 <strong>{r.message}</strong>
                 <span>
                   {r.transitionedCount === 0
-                    ? 'No completed demo resources were available to transition.'
+                    ? 'All completed demo resources are already in GLACIER.'
                     : `${r.transitionedCount} resource${r.transitionedCount === 1 ? '' : 's'} now in GLACIER: ${r.transitioned.join(', ')}`}
                 </span>
               </>

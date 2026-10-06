@@ -59,8 +59,10 @@ control (also in `docs/LOCAL_ACCEPTANCE.md`).
 
 ## 5. Storage tiering (teacher)
 
-**Simulate Glacier tiering** moves up to 10 completed demo resources to the
-`GLACIER` storage class now, instead of after the 90-day lifecycle rule.
+**Simulate Glacier tiering** moves up to 10 completed demo resources that are
+still in the Standard tier to the `GLACIER` storage class now, instead of after
+the 90-day lifecycle rule. Running it again only moves resources that are still
+Standard (it reports zero when none are left).
 **Storage overview** updates. This is a local simulation; Glacier restore is not
 implemented, so opening a Glacier-tier resource may be refused by S3 — which is
 also how real Glacier behaves without a restore.

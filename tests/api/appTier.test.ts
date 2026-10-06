@@ -7,6 +7,7 @@
  * reachable, setup failures (login, seeding) fail the suite.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
+import jwt from 'jsonwebtoken';
 import { stackAvailable, urls } from '../helpers/infra.js';
 
 const BASE = urls.APP_TIER;
@@ -14,6 +15,7 @@ const available = await stackAvailable('API tests (tests/api)', ['appTier']);
 
 let teacherToken = '';
 let studentToken = '';
+let adminToken = '';
 
 async function post(path: string, body?: unknown, token?: string) {
   return fetch(`${BASE}${path}`, {
@@ -48,6 +50,7 @@ describe.skipIf(!available)('App Tier API (live stack)', () => {
     // Demo users are created at App Tier startup (DEMO_MODE).
     teacherToken = await login('teacher@classquest.example', 'DemoTeacher123!');
     studentToken = await login('student@classquest.example', 'DemoStudent123!');
+    adminToken = await login('admin@classquest.example', 'DemoAdmin123!');
     const seed = await post('/demo/seed', undefined, teacherToken);
     expect(seed.status, 'demo seed').toBe(200);
   });
@@ -69,6 +72,76 @@ describe.skipIf(!available)('App Tier API (live stack)', () => {
     const body = await r.json();
     expect(body.token).toBeTruthy();
     expect(body.role).toBe('teacher');
+  });
+
+  it('logs in the demo student and admin with their roles', async () => {
+    for (const [email, password, role] of [
+      ['student@classquest.example', 'DemoStudent123!', 'student'],
+      ['admin@classquest.example', 'DemoAdmin123!', 'admin'],
+    ]) {
+      const r = await post('/auth/login', { email, password });
+      expect(r.status).toBe(200);
+      expect((await r.json()).role).toBe(role);
+    }
+  });
+
+  it('rejects missing, malformed and expired tokens (401)', async () => {
+    const get = (token?: string) =>
+      fetch(`${BASE}/auth/me`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const none = await get();
+    expect(none.status).toBe(401);
+    expect((await none.json()).error.code).toBe('UNAUTHENTICATED');
+    const garbage = await get('not-a-jwt');
+    expect(garbage.status).toBe(401);
+    expect((await garbage.json()).error.code).toBe('INVALID_TOKEN');
+    // Signed with the configured secret but already expired (if the secret
+    // differs, the signature check rejects it — 401 either way).
+    const expired = jwt.sign(
+      { sub: 'x', email: 'student@classquest.example', role: 'student', displayName: 'x', exp: Math.floor(Date.now() / 1000) - 60 },
+      process.env.JWT_SECRET ?? 'local-dev-jwt-secret-change-me',
+    );
+    const r = await get(expired);
+    expect(r.status).toBe(401);
+    expect((await r.json()).error.code).toBe('INVALID_TOKEN');
+  });
+
+  it('/auth/me returns the caller identity', async () => {
+    const me = await (await fetch(`${BASE}/auth/me`, { headers: { Authorization: `Bearer ${adminToken}` } })).json();
+    expect(me.user).toMatchObject({ email: 'admin@classquest.example', role: 'admin' });
+  });
+
+  it('enforces the role matrix on protected routes', async () => {
+    const status = async (method: string, path: string, token?: string) =>
+      (await fetch(`${BASE}${path}`, { method, headers: token ? { Authorization: `Bearer ${token}` } : {} })).status;
+    // [method, path, unauthenticated, student, teacher, admin] — 'ok' means not 401/403
+    const matrix: Array<[string, string, number, number | 'ok', number | 'ok', number | 'ok']> = [
+      ['GET', '/assets', 401, 'ok', 'ok', 'ok'],
+      ['POST', '/assets', 401, 403, 'ok', 'ok'],
+      ['GET', '/jobs/any-id', 401, 403, 'ok', 'ok'],
+      ['GET', '/dashboard/metrics', 401, 403, 'ok', 'ok'],
+      ['GET', '/me/progress', 401, 'ok', 403, 403],
+      ['POST', '/demo/induce-failure', 401, 403, 'ok', 'ok'],
+      ['POST', '/demo/lifecycle-simulate', 401, 403, 'ok', 'ok'],
+    ];
+    for (const [method, path, ...expected] of matrix) {
+      const got = [
+        await status(method, path),
+        await status(method, path, studentToken),
+        // Avoid running the side-effecting demo actions here; their staff paths are covered elsewhere.
+        path.startsWith('/demo/') ? 'ok' : await status(method, path, teacherToken),
+        path.startsWith('/demo/') ? 'ok' : await status(method, path, adminToken),
+      ];
+      expected.forEach((exp, i) => {
+        const g = got[i];
+        if (exp === 'ok') expect(g === 401 || g === 403, `${method} ${path} [${i}] got ${g}`).toBe(false);
+        else expect(g, `${method} ${path} [${i}]`).toBe(exp);
+      });
+    }
+  });
+
+  it('rejects an invalid library type filter (400)', async () => {
+    const r = await fetch(`${BASE}/assets?type=spreadsheet`, { headers: { Authorization: `Bearer ${studentToken}` } });
+    expect(r.status).toBe(400);
   });
 
   it('blocks unauthenticated access to the metrics (401)', async () => {

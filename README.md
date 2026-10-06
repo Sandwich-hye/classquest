@@ -163,21 +163,27 @@ docs/                 OBSERVABILITY.md · LOCAL_ACCEPTANCE.md
 
 ## Testing
 
+| Suite | Files | Needs | Covers |
+|-------|-------|-------|--------|
+| **Unit** | `tests/unit` | nothing | Job state machine, schemas, worker idempotency and redrive contract, publish write order, route authorisation (in-process App Tier), demo gating and seed locking, open tracking, frontend route guards and view logic |
+| **API** | `tests/api` | App Tier | Logins for all roles, invalid/expired tokens, role matrix, validation, demo auth, progress endpoint |
+| **Integration** | `tests/integration/stack.test.ts`, `cloud.test.ts` | App Tier, LocalStack, MySQL | Terraform resources (redrive, SNS, alarm, metric filter); upload of document/book/video verified in S3 and MySQL; validation stores nothing; duplicate SQS delivery; library visibility and filters; presigned download bytes; `resource_access` rows and `/me/progress` vs the database; queue depth, storage tiers and alarm state vs SQS/MySQL/CloudWatch; Glacier simulation (incl. re-run); concurrent seeding |
+| **E2E** | `tests/e2e` | Web Tier, App Tier, LocalStack | Through the public entry: SPA deep links and branding, upload → completed → student download, induced failure → retries → **real DLQ**, HTTP 400 burst → measured breach and CloudWatch access-log events |
+| **Database** (opt-in) | `tests/integration/progressDb.test.ts` | a disposable MySQL database | Migration idempotency, `resource_access` aggregate, student isolation, named-lock serialisation |
+
 ```bash
-npm test                 # everything; Docker-dependent suites skip if the stack is down
-npm run test:unit        # unit + in-process API tests (no Docker needed)
-npm run typecheck        # backend TypeScript
-npm run lint
+npm run test:unit         # no Docker needed
+npm run test:all          # everything; live suites are SKIPPED (with a reason) if the stack is down
+npm run test:acceptance   # live suites only; FAILS if any required service is unreachable
+npm run test:api | test:integration | test:e2e
 ```
 
-- **Unit / in-process** tests (`tests/unit`) always run: state machine,
-  validation, worker idempotency and redrive contract, publish ordering, route
-  authorisation, open tracking, and frontend view logic.
-- **API, integration and e2e** tests need the Docker stack. When it is not
-  running they are reported as **skipped** (with a `[SKIPPED]` notice naming the
-  missing services) — never as passed.
-- `tests/integration/progressDb.test.ts` is **opt-in**: set
-  `TEST_MYSQL_DATABASE` to a disposable database to run it.
+- Live suites never pass by returning early: they are reported as **skipped**
+  with a `[SKIPPED] … not reachable` notice, or — under `test:acceptance` —
+  **fail**.
+- Test files run one at a time because the live suites share one stack.
+- The database suite runs only when `TEST_MYSQL_DATABASE` names a disposable
+  database (it deletes rows); see `docs/LOCAL_ACCEPTANCE.md`.
 
 ## Scripts
 
@@ -186,7 +192,9 @@ npm run lint
 | `npm run build` | Build all workspaces |
 | `npm run typecheck` | Type-check shared, app-tier, web-tier, worker |
 | `npm run lint` | ESLint (TypeScript) |
-| `npm test` / `test:unit` / `test:api` / `test:integration` / `test:e2e` | Vitest suites |
+| `npm test` / `test:all` | All suites; live suites skipped with a reason if the stack is down |
+| `npm run test:unit` / `test:api` / `test:integration` / `test:e2e` | One suite |
+| `npm run test:acceptance` | Live suites only; fails if the Docker stack is unreachable |
 | `npm run stack:up` / `stack:down` / `stack:logs` | `docker compose up -d --build` / `down -v` / `logs -f` |
 | `npm run stack:scale-workers` | Run 3 workers (elasticity demo) |
 | `npm run demo:seed` | Seed the demo catalogue through the running stack |

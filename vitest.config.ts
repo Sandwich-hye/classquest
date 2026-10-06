@@ -19,5 +19,8 @@ export default defineConfig({
     hookTimeout: 60_000,
     pool: 'forks',
     sequence: { concurrent: false },
+    // Live suites share one running stack; run test files one at a time so
+    // they never race each other (e.g. two concurrent demo seeds).
+    fileParallelism: false,
   },
 });

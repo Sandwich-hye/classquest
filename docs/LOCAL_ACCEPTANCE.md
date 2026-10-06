@@ -145,6 +145,7 @@ docker compose exec localstack sh -c 'awslocal sqs receive-message --visibility-
 **Simulate Glacier tiering** (Operations):
 
 - [ ] Result lists the resources moved; **Storage overview → Glacier (simulated)** increases.
+- [ ] Click it again: it succeeds and moves only resources still in Standard (zero once all are in GLACIER).
 
 ```powershell
 docker compose exec localstack awslocal s3api list-objects-v2 --bucket classquest-media-assets-dev --query "Contents[].[Key,StorageClass]" --output table
@@ -171,13 +172,16 @@ docker compose exec localstack awslocal cloudwatch describe-alarms --alarm-names
 ```powershell
 npm run typecheck
 npm run lint
-npm test
+npm run test:unit
+npm run test:acceptance
 ```
 
 - [ ] Typecheck and lint report no errors.
-- [ ] `npm test`: unit, API, integration and e2e suites all **run and pass**; there are no `[SKIPPED] ... Docker stack not reachable` notices. Only `tests/integration/progressDb.test.ts` (4 tests) is skipped, because it is opt-in. The e2e suite takes 2–3 minutes.
+- [ ] `test:unit` passes (no Docker needed).
+- [ ] `test:acceptance` runs the API, integration and e2e suites against the stack and passes. It **fails** (instead of skipping) if any service is unreachable. Only `tests/integration/progressDb.test.ts` is skipped, because it is opt-in. Takes about 1–2 minutes.
+- [ ] Optional: `npm run test:all` runs everything in one go.
 
-Optional — run the database test against a disposable database in the Compose MySQL:
+Database suite against a disposable database in the Compose MySQL (it deletes rows, so never point it at `classquest`):
 
 ```powershell
 docker compose exec mysql mysql -uroot -pchange-me-root-locally -e "CREATE DATABASE IF NOT EXISTS cq_test; GRANT ALL ON cq_test.* TO 'classquest_app'@'%';"
@@ -186,7 +190,7 @@ npx vitest run tests/integration/progressDb.test.ts
 Remove-Item Env:TEST_MYSQL_DATABASE, Env:TEST_MYSQL_USER, Env:TEST_MYSQL_PASSWORD
 ```
 
-- [ ] 4 tests pass.
+- [ ] 5 tests pass.
 
 ## 12. Screenshots for the demo / report
 

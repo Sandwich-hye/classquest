@@ -16,6 +16,8 @@ import {
   requireAuth,
   requireRole,
   createLogger,
+  withNamedLock,
+  LockTimeoutError,
 } from '@classquest/shared';
 import { storage, config } from '../services.js';
 import { loadSampleUsers, loadSampleCatalog, loadSampleAsset } from '../sampleData.js';
@@ -64,50 +66,59 @@ demoRouter.all('/bad-request', (_req: Request, res: Response) => {
 // Everything below manages demo data and requires a teacher/admin.
 demoRouter.use(requireAuth, requireRole('teacher', 'admin'));
 
+/** MySQL named lock that serialises seeding (check-then-insert must not race). */
+export const SEED_LOCK = 'classquest:demo-seed';
+
 /**
  * POST /demo/seed — ensure demo users exist and publish the sample catalog.
  * Catalog entries already present (same title, demo-flagged) are skipped, so
- * repeated seeding does not duplicate assets. Never returns passwords.
+ * repeated seeding does not duplicate assets. Concurrent requests are
+ * serialised with a database lock; otherwise two seeds could both see an
+ * entry as missing and both insert it. Never returns passwords.
  */
 demoRouter.post('/seed', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    await ensureDemoUsers();
-    const users = await loadSampleUsers();
-    const ownerId = await demoTeacherId();
-    const existing = new Set(
-      (await assetRepo.list()).filter((a) => a.isDemo).map((a) => a.title),
-    );
-
-    const catalog = await loadSampleCatalog();
-    const created: Array<{ assetId: string; jobId: string; title: string }> = [];
-    const skipped: string[] = [];
-    for (const entry of catalog) {
-      if (existing.has(entry.title)) {
-        skipped.push(entry.title);
-        continue;
-      }
-      const { asset, jobId } = await publishAsset({
-        ownerId,
-        title: entry.title,
-        type: entry.type,
-        body: await loadSampleAsset(entry.filename),
-        contentType: entry.contentType,
-        originalName: entry.filename,
-        isDemo: true,
-      });
-      created.push({ assetId: asset.id, jobId, title: entry.title });
-    }
-
-    res.json({
-      message: 'Demo data seeded (all records labelled DEMO/SAMPLE).',
-      users: users.map((u) => ({ email: u.email, role: u.role })),
-      assets: created,
-      skipped,
-    });
+    res.json(await withNamedLock(SEED_LOCK, 30, seedCatalog));
   } catch (err) {
-    next(err);
+    next(err instanceof LockTimeoutError ? new ApiError(409, 'SEED_IN_PROGRESS', 'Another demo seed is still running; try again shortly') : err);
   }
 });
+
+async function seedCatalog() {
+  await ensureDemoUsers();
+  const users = await loadSampleUsers();
+  const ownerId = await demoTeacherId();
+  const existing = new Set(
+    (await assetRepo.list()).filter((a) => a.isDemo).map((a) => a.title),
+  );
+
+  const catalog = await loadSampleCatalog();
+  const created: Array<{ assetId: string; jobId: string; title: string }> = [];
+  const skipped: string[] = [];
+  for (const entry of catalog) {
+    if (existing.has(entry.title)) {
+      skipped.push(entry.title);
+      continue;
+    }
+    const { asset, jobId } = await publishAsset({
+      ownerId,
+      title: entry.title,
+      type: entry.type,
+      body: await loadSampleAsset(entry.filename),
+      contentType: entry.contentType,
+      originalName: entry.filename,
+      isDemo: true,
+    });
+    created.push({ assetId: asset.id, jobId, title: entry.title });
+  }
+
+  return {
+    message: 'Demo data seeded (all records labelled DEMO/SAMPLE).',
+    users: users.map((u) => ({ email: u.email, role: u.role })),
+    assets: created,
+    skipped,
+  };
+}
 
 /**
  * POST /demo/induce-failure — enqueue a job that the worker will fail on every
@@ -140,19 +151,25 @@ demoRouter.post('/induce-failure', async (_req: Request, res: Response, next: Ne
 /**
  * POST /demo/lifecycle-simulate — move completed demo assets to the GLACIER
  * tier to demonstrate the 90-day transition on demand (report 5.4.5, AC-6).
+ * Only STANDARD-tier assets are candidates: the simulation reads each object
+ * back, and S3 refuses reads of (unrestored) GLACIER objects, so re-running it
+ * over already-transitioned assets would fail with InvalidObjectState.
  */
 demoRouter.post('/lifecycle-simulate', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const assets = await assetRepo.list();
-    const demoAssets = assets.filter((a) => a.isDemo && a.status === 'completed');
+    const candidates = assets.filter((a) => a.isDemo && a.status === 'completed' && a.storageClass === 'STANDARD');
     const transitioned: string[] = [];
-    for (const a of demoAssets.slice(0, 10)) {
+    for (const a of candidates.slice(0, 10)) {
       await storage.simulateTransitionToGlacier(a.s3Key, a.contentType);
       await assetRepo.setStorageClass(a.id, 'GLACIER');
       transitioned.push(a.title);
     }
     res.json({
-      message: 'Simulated Standard -> Glacier lifecycle transition (report 5.4.5).',
+      message:
+        transitioned.length > 0
+          ? 'Simulated Standard -> Glacier lifecycle transition (report 5.4.5).'
+          : 'No completed demo resources remain in the Standard tier; nothing to transition.',
       transitionedCount: transitioned.length,
       transitioned,
     });

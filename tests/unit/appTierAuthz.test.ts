@@ -19,6 +19,10 @@ const fx = vi.hoisted(() => {
     listFilter: undefined as unknown,
     presign: vi.fn(async (key: string) => `http://s3/${key}?sig`),
     recordOpen: vi.fn(async (_userId: string, _assetId: string) => {}),
+    // Named-lock stub: records the lock name and runs the critical section.
+    simulate: vi.fn(async (_key: string, _ct?: string) => {}),
+    setStorageClass: vi.fn(async (_id: string, _sc: string) => {}),
+    lock: vi.fn(async <T,>(_name: string, _timeout: number, fn: () => Promise<T>): Promise<T> => fn()),
     progressFor: vi.fn(async (userId: string) => ({
       available: 4, opened: 1, coverage: 0.25, lastOpenedAt: '2026-10-06T00:00:00.000Z',
       byType: { document: { opened: 1, available: 2 }, book: { opened: 0, available: 1 }, video: { opened: 0, available: 1 } },
@@ -37,12 +41,14 @@ vi.mock('@classquest/shared', async (importOriginal) => {
     metricsRepo: { record: async () => {} },
     assetRepo: {
       findById: async (id: string) => fx.assets[id] ?? null,
+      setStorageClass: fx.setStorageClass,
       list: async (filter?: { status?: string }) => {
         fx.listFilter = filter;
         return Object.values(fx.assets).filter((a) => !filter?.status || a.status === filter.status);
       },
     },
     accessRepo: { recordOpen: fx.recordOpen, progressFor: fx.progressFor },
+    withNamedLock: fx.lock,
     jobRepo: {
       findById: async (id: string) => ({ id, assetId: 'q1', state: 'queued', attempts: 0, lastError: null,
         submittedAt: '', startedAt: null, finishedAt: null }),
@@ -57,7 +63,7 @@ vi.mock('@classquest/shared', async (importOriginal) => {
 
 vi.mock('../../services/app-tier/src/services.js', () => ({
   config: { maxUploadBytes: 1_000_000, worker: { maxAttempts: 3 } },
-  storage: { getPresignedUrl: fx.presign, headObjectTier: async () => 'STANDARD' },
+  storage: { getPresignedUrl: fx.presign, headObjectTier: async () => 'STANDARD', simulateTransitionToGlacier: fx.simulate },
   queue: {}, metrics: { incrementCounter: async () => {} }, alerts: {},
 }));
 vi.mock('../../services/app-tier/src/publish.js', () => ({ publishAsset: fx.publish }));
@@ -81,6 +87,7 @@ beforeEach(() => {
   fx.recordOpen.mockReset();
   fx.recordOpen.mockImplementation(async () => {});
   fx.progressFor.mockClear();
+  fx.lock.mockClear();
 });
 
 describe('asset visibility', () => {
@@ -222,6 +229,54 @@ describe('demo controls (DEMO_MODE=true)', () => {
     expect(r.body).not.toHaveProperty('credentials');
     expect(JSON.stringify(r.body)).not.toMatch(/password|Demo(Teacher|Student|Admin)123/i);
     expect(r.body.users.length).toBeGreaterThan(0);
+  });
+
+  it('seed runs inside the demo-seed database lock (no check-then-insert race)', async () => {
+    expect((await request(app).post('/demo/seed').set('Authorization', teacher)).status).toBe(200);
+    expect(fx.lock).toHaveBeenCalledTimes(1);
+    expect(fx.lock.mock.calls[0]![0]).toBe('classquest:demo-seed');
+  });
+
+  it('seed returns 409 when another seed holds the lock', async () => {
+    fx.lock.mockImplementationOnce(async () => {
+      throw new shared.LockTimeoutError('classquest:demo-seed');
+    });
+    const r = await request(app).post('/demo/seed').set('Authorization', admin);
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe('SEED_IN_PROGRESS');
+    expect(fx.publish).not.toHaveBeenCalled();
+  });
+
+  it('lifecycle-simulate only transitions STANDARD-tier demo assets (regression: GLACIER re-read caused 500)', async () => {
+    const base = { ...fx.assets.c1!, isDemo: true, status: 'completed' };
+    fx.assets.g1 = { ...base, id: 'g1', title: 'Already glacier', s3Key: 'documents/g1', storageClass: 'GLACIER' };
+    fx.assets.s1 = { ...base, id: 's1', title: 'Still standard', s3Key: 'documents/s1', storageClass: 'STANDARD' };
+    try {
+      fx.simulate.mockClear();
+      fx.setStorageClass.mockClear();
+      const r = await request(app).post('/demo/lifecycle-simulate').set('Authorization', teacher);
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ transitionedCount: 1, transitioned: ['Still standard'] });
+      expect(fx.simulate).toHaveBeenCalledTimes(1);
+      expect(fx.simulate.mock.calls[0]![0]).toBe('documents/s1');
+      expect(fx.setStorageClass).toHaveBeenCalledWith('s1', 'GLACIER');
+    } finally {
+      delete fx.assets.g1;
+      delete fx.assets.s1;
+    }
+  });
+
+  it('lifecycle-simulate with nothing left in STANDARD returns 200 with zero transitioned', async () => {
+    fx.assets.g2 = { ...fx.assets.c1!, id: 'g2', isDemo: true, storageClass: 'GLACIER' };
+    try {
+      fx.simulate.mockClear();
+      const r = await request(app).post('/demo/lifecycle-simulate').set('Authorization', admin);
+      expect(r.status).toBe(200);
+      expect(r.body.transitionedCount).toBe(0);
+      expect(fx.simulate).not.toHaveBeenCalled();
+    } finally {
+      delete fx.assets.g2;
+    }
   });
 
   it('induce-failure flags the job for failure via the demo path only', async () => {

@@ -15,7 +15,7 @@ export function Sidebar({ role, displayName, onLogout }: SidebarProps) {
   return (
     <aside className="cq-sidebar" aria-label="Main navigation">
       <div className="cq-sidebar__brand">
-        <Logo size={34} />
+        <Logo size={30} onDark />
         <div className="cq-sidebar__wordmark">
           <span className="cq-sidebar__name">
             Class<span>Quest</span>

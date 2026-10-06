@@ -66,7 +66,7 @@ export function Login() {
     <div className="cq-login">
       <section className="cq-login__brand" aria-label="About ClassQuest">
         <div className="cq-login__brand-top">
-          <Logo size={38} />
+          <Logo size={36} onDark />
           <span className="cq-sidebar__name">
             Class<span>Quest</span>
           </span>

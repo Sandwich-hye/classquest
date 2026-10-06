@@ -78,14 +78,15 @@ resources. Everything marked *Documented* is in the report's design only.
 | AC | Description | Verified by |
 |----|-------------|-------------|
 | AC-1 | One-command provisioning on LocalStack | `docker compose up -d --build` (Terraform container) |
-| AC-2 | Upload → queued → processing → completed → open | `tests/e2e/workflow.test.ts`; `tests/unit/publish.test.ts`; Publish Resource page |
+| AC-2 | Upload → queued → processing → completed → open | `tests/integration/stack.test.ts` (S3 + MySQL verified for document/book/video); `tests/e2e/workflow.test.ts`; `tests/unit/publish.test.ts` |
 | AC-3 | Induced failure → retries → failed → DLQ | `tests/unit/processor.test.ts` (redrive contract); `tests/e2e/workflow.test.ts` (message found on the DLQ) |
 | AC-4 | >50 HTTP 400/min recorded; alarm wiring present | `tests/e2e/workflow.test.ts`; `tests/unit/operations.test.ts`; `npm run demo:400-burst` |
 | AC-5 | Dashboards show real values | `dashboard.ts`, `health.ts`; `tests/unit/operations.test.ts` |
-| AC-6 | Standard → Glacier observable | `/demo/lifecycle-simulate`; Operations storage panel |
+| AC-6 | Standard → Glacier observable | `tests/integration/stack.test.ts` (S3 storage class, MySQL, metrics; re-run safe); Operations storage panel |
 | AC-7 | Role-based access | `tests/unit/appTierAuthz.test.ts`; `tests/unit/navigation.test.ts`; `tests/api/appTier.test.ts` |
-| AC-8 | Student progress recorded from real opens | `tests/unit/appTierAuthz.test.ts`; `tests/integration/progressDb.test.ts` (opt-in) |
+| AC-8 | Student progress recorded from real opens | `tests/integration/stack.test.ts` (rows + `/me/progress` vs MySQL); `tests/unit/appTierAuthz.test.ts`; `tests/integration/progressDb.test.ts` (opt-in) |
 | AC-9 | This matrix | this file |
 
 `npm test` runs every suite; suites that need the Docker stack are reported as
-skipped when it is not running.
+skipped when it is not running. `npm run test:acceptance` runs only the live
+suites and fails if the stack is unreachable.
