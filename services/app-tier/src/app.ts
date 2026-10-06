@@ -11,6 +11,7 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { healthRouter } from './routes/health.js';
 import { demoRouter } from './routes/demo.js';
 import { meRouter } from './routes/me.js';
+import { coursesRouter } from './routes/courses.js';
 
 export function createApp(): Express {
   const app = express();
@@ -30,6 +31,7 @@ export function createApp(): Express {
   app.use('/auth', authRouter);
 
   // Core business logic.
+  app.use('/courses', coursesRouter);
   app.use('/assets', assetsRouter);
   app.use('/jobs', jobsRouter);
   app.use('/dashboard', dashboardRouter);

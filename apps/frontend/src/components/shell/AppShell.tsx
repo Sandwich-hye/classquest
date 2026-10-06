@@ -12,7 +12,7 @@ export function AppShell() {
   if (!session) return null;
 
   const portal = session.role === 'teacher' ? 'Teacher Portal' : session.role === 'admin' ? 'Administration' : 'Learning Portal';
-  const context = ['ClassQuest', portal, routeLabel(pathname) ?? ''].filter(Boolean);
+  const context = ['ClassQuest', portal, routeLabel(pathname, session.role) ?? ''].filter(Boolean);
 
   return (
     <div className="cq-shell">

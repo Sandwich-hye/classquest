@@ -9,13 +9,24 @@ process.env.JWT_SECRET = 'test-secret';
 process.env.DEMO_MODE = 'true';
 
 const fx = vi.hoisted(() => {
-  const asset = (id: string, status: string) => ({
-    id, ownerId: 't1', title: `Asset ${id}`, type: 'document', s3Key: `documents/${id}`, s3Bucket: 'b',
+  const COURSE_ID = '11111111-1111-4111-8111-111111111111';
+  const asset = (id: string, status: string, courseStatus = 'published') => ({
+    id, ownerId: 't1', courseId: COURSE_ID, courseTitle: 'Course', courseStatus, title: `Asset ${id}`,
+    description: '', sectionLabel: null, displayOrder: 0, type: 'document', s3Key: `documents/${id}`, s3Bucket: 'b',
     sizeBytes: 1, contentType: 'text/plain', storageClass: 'STANDARD', status, isDemo: false,
     createdAt: '', updatedAt: '',
   });
   return {
-    assets: { c1: asset('c1', 'completed'), q1: asset('q1', 'queued'), p1: asset('p1', 'processing'), f1: asset('f1', 'failed') } as Record<string, ReturnType<typeof asset>>,
+    COURSE_ID,
+    course: {
+      id: COURSE_ID, title: 'Course', description: '', category: 'General', coverKey: null, coverContentType: null,
+      creatorId: 'teacher-id', creatorName: 'T', status: 'published', isDemo: false, createdAt: '', updatedAt: '',
+    },
+    assets: {
+      c1: asset('c1', 'completed'), q1: asset('q1', 'queued'), p1: asset('p1', 'processing'), f1: asset('f1', 'failed'),
+      // Completed resources whose course students must not see.
+      d1: asset('d1', 'completed', 'draft'), a1: asset('a1', 'completed', 'archived'),
+    } as Record<string, ReturnType<typeof asset>>,
     listFilter: undefined as unknown,
     presign: vi.fn(async (key: string) => `http://s3/${key}?sig`),
     recordOpen: vi.fn(async (_userId: string, _assetId: string) => {}),
@@ -42,10 +53,18 @@ vi.mock('@classquest/shared', async (importOriginal) => {
     assetRepo: {
       findById: async (id: string) => fx.assets[id] ?? null,
       setStorageClass: fx.setStorageClass,
-      list: async (filter?: { status?: string }) => {
+      list: async (filter?: { status?: string; studentVisible?: boolean }) => {
         fx.listFilter = filter;
-        return Object.values(fx.assets).filter((a) => !filter?.status || a.status === filter.status);
+        return Object.values(fx.assets)
+          .filter((a) => !filter?.status || a.status === filter.status)
+          .filter((a) => !filter?.studentVisible || a.courseStatus === 'published');
       },
+      demoKeys: async () => new Set<string>(),
+    },
+    courseRepo: {
+      findById: async (id: string) => (id === fx.COURSE_ID ? fx.course : null),
+      findDemoByTitle: async () => fx.course,
+      create: async () => fx.course,
     },
     accessRepo: { recordOpen: fx.recordOpen, progressFor: fx.progressFor },
     withNamedLock: fx.lock,
@@ -94,14 +113,14 @@ describe('asset visibility', () => {
   it('students only list completed assets', async () => {
     const r = await request(app).get('/assets').set('Authorization', student);
     expect(r.status).toBe(200);
-    expect(fx.listFilter).toMatchObject({ status: 'completed' });
+    expect(fx.listFilter).toMatchObject({ status: 'completed', studentVisible: true });
     expect(r.body.assets.map((a: { id: string }) => a.id)).toEqual(['c1']);
   });
 
   it('teachers list assets in every state', async () => {
     const r = await request(app).get('/assets').set('Authorization', teacher);
     expect((fx.listFilter as { status?: string }).status).toBeUndefined();
-    expect(r.body.assets).toHaveLength(4);
+    expect(r.body.assets).toHaveLength(Object.keys(fx.assets).length);
   });
 
   it('students get a presigned URL for a completed asset', async () => {
@@ -114,6 +133,13 @@ describe('asset visibility', () => {
     const r = await request(app).get(`/assets/${id}`).set('Authorization', student);
     expect(r.status).toBe(404);
     expect(fx.presign).not.toHaveBeenCalled();
+  });
+
+  it.each(['d1', 'a1'])('students get 404 and no presigned URL for completed asset %s in a draft/archived course', async (id) => {
+    const r = await request(app).get(`/assets/${id}`).set('Authorization', student);
+    expect(r.status).toBe(404);
+    expect(fx.presign).not.toHaveBeenCalled();
+    expect(fx.recordOpen).not.toHaveBeenCalled();
   });
 
   it('teachers and admins can open unpublished assets', async () => {
@@ -191,6 +217,7 @@ describe('upload', () => {
     const r = await request(app)
       .post('/assets?induceFailure=true')
       .set('Authorization', teacher)
+      .field('courseId', fx.COURSE_ID)
       .field('title', 'Notes')
       .field('type', 'document')
       .attach('file', Buffer.from('hello'), { filename: 'n.txt', contentType: 'text/plain' });

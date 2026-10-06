@@ -1,32 +1,36 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type ApiError, type Asset, type DashboardMetrics } from '../api';
-import { ACCEPTED, formatDate, searchAndSort, TYPE_LABEL, type AssetType } from '../lib/assets';
+import { api, type ApiError, type Asset, type DashboardMetrics, type StaffCourse } from '../api';
+import { formatDate, searchAndSort, TYPE_LABEL } from '../lib/assets';
 import { assetStateCounts, share } from '../lib/operations';
+import { formatRelative } from '../lib/progress';
 import { PageHeader } from '../components/shell/PageHeader';
+import { CourseStatusBadge } from '../components/courses/CourseStatusBadge';
 import { Badge, Card, EmptyState, Icon, ProgressBar, STATUS_TONE, StatCard } from '../components/ui';
 
-const TYPES: AssetType[] = ['document', 'book', 'video'];
 const BAR_TONE = { completed: 'success', failed: 'danger', processing: 'primary', queued: 'primary', submitted: 'primary' } as const;
 
 /**
- * Teacher Dashboard. Library-wide counts from GET /dashboard/metrics and the
- * newest resources from GET /assets. No student analytics; the backend cannot
- * scope these to the signed-in teacher, so nothing is labelled "mine".
+ * Teacher Dashboard. The teacher's own courses from GET /courses, library-wide
+ * pipeline counts from GET /dashboard/metrics and the newest resources from
+ * GET /assets. No student analytics: pipeline metrics are library-wide, so
+ * only the course list is labelled "mine".
  */
 export function TeacherDashboard() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [recent, setRecent] = useState<Asset[] | null>(null);
+  const [courses, setCourses] = useState<StaffCourse[] | null>(null);
   // SQS reachability from /health: the metrics API reports depth 0 when SQS is down.
   const [sqsUp, setSqsUp] = useState<boolean | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [m, a, h] = await Promise.allSettled([api.dashboard(), api.listAssets(), api.health()]);
+    const [m, a, h, c] = await Promise.allSettled([api.dashboard(), api.listAssets(), api.health(), api.listCourses()]);
     setSqsUp(h.status === 'fulfilled' ? h.value.dependencies?.sqs : undefined);
     if (m.status === 'fulfilled') setMetrics(m.value);
     if (a.status === 'fulfilled') setRecent(searchAndSort(a.value.assets, '', 'newest').slice(0, 6));
-    const failed = [m, a].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    if (c.status === 'fulfilled') setCourses(c.value.courses);
+    const failed = [m, a, c].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
     setError(failed ? ((failed.reason as ApiError)?.message ?? 'Some information could not be loaded') : null);
   }, []);
 
@@ -41,17 +45,18 @@ export function TeacherDashboard() {
   const s = metrics?.jobs.byStatus ?? {};
   const inPipeline = (s.submitted ?? 0) + (s.queued ?? 0) + (s.processing ?? 0);
   const states = metrics ? assetStateCounts(metrics.jobs.byStatus) : null;
+  const courseCount = (status: StaffCourse['status']) => (courses ?? []).filter((c) => c.status === status).length;
 
   return (
     <>
       <PageHeader
         eyebrow="Teacher Portal"
         title="Dashboard"
-        description="An overview of the resource library and its processing pipeline."
+        description="Your courses, and an overview of the resource library and its processing pipeline."
         actions={
           <>
-            <Link className="cq-btn cq-btn--secondary" to="/operations">
-              <Icon name="operations" size={18} /> Operations
+            <Link className="cq-btn cq-btn--secondary" to="/courses">
+              <Icon name="course" size={18} /> My Courses
             </Link>
             <Link className="cq-btn cq-btn--primary" to="/publish">
               <Icon name="publish" size={18} /> Publish resource
@@ -77,16 +82,43 @@ export function TeacherDashboard() {
       </div>
 
       <div className="cq-ops-columns cq-ops-section">
-        <Card title="Quick publish" subtitle="Start a new upload with the type already selected.">
-          <div className="cq-type-tiles">
-            {TYPES.map((t) => (
-              <Link key={t} to={`/publish?type=${t}`} className={`cq-type-tile cq-type-tile--${t}`}>
-                <span className="cq-type-tile__icon"><Icon name={t} size={22} /></span>
-                <span className="cq-type-tile__label">{TYPE_LABEL[t]}</span>
-                <span className="cq-type-tile__formats">{ACCEPTED[t].extensions.join(' · ')}</span>
-              </Link>
-            ))}
-          </div>
+        <Card
+          title="My Courses"
+          subtitle="Courses you created, most recently updated first."
+          action={<Link className="cq-btn cq-btn--link" to="/courses">View all →</Link>}
+        >
+          {!courses ? (
+            <p className="cq-small">Loading…</p>
+          ) : courses.length === 0 ? (
+            <EmptyState
+              icon="course"
+              title="No courses yet"
+              description="Create a course, then add resources to it."
+              action={<Link className="cq-btn cq-btn--primary" to="/courses/new">Create Course</Link>}
+            />
+          ) : (
+            <>
+              <div className="cq-mini-stats">
+                <StatCard label="Published" value={courseCount('published')} tone="success" />
+                <StatCard label="Draft" value={courseCount('draft')} tone="warning" />
+                <StatCard label="Archived" value={courseCount('archived')} tone="callout" />
+              </div>
+              <ul className="cq-recent cq-dashboard-courses">
+                {courses.slice(0, 4).map((c) => (
+                  <li key={c.id} className="cq-recent__item">
+                    <span className="cq-recent__icon cq-resource__thumb--book" aria-hidden="true"><Icon name="course" size={18} /></span>
+                    <div className="cq-recent__text">
+                      <Link to={`/courses/${c.id}`} className="cq-recent__title">{c.title}</Link>
+                      <span className="cq-small">
+                        {c.resourceCount} {c.resourceCount === 1 ? 'resource' : 'resources'} · {c.completedCount} ready · Updated {formatRelative(c.updatedAt)}
+                      </span>
+                    </div>
+                    <CourseStatusBadge status={c.status} />
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </Card>
 
         <Card
@@ -125,6 +157,7 @@ export function TeacherDashboard() {
               <thead>
                 <tr>
                   <th scope="col">Title</th>
+                  <th scope="col">Course</th>
                   <th scope="col">Type</th>
                   <th scope="col">Status</th>
                   <th scope="col">Storage tier</th>
@@ -138,6 +171,7 @@ export function TeacherDashboard() {
                       <span className={`cq-recent__icon cq-resource__thumb--${a.type}`} aria-hidden="true"><Icon name={a.type} size={16} /></span>
                       <span>{a.title}</span>
                     </td>
+                    <td><Link to={`/courses/${a.courseId}`}>{a.courseTitle}</Link></td>
                     <td>{TYPE_LABEL[a.type]}</td>
                     <td><Badge tone={STATUS_TONE[a.status] ?? 'neutral'} upper>{a.status}</Badge></td>
                     <td><Badge tone={a.storageClass === 'GLACIER' ? 'neutral' : 'callout'} upper>{a.storageClass === 'GLACIER' ? 'Glacier' : 'Standard'}</Badge></td>

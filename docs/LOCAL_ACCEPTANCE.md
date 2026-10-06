@@ -72,64 +72,97 @@ docker compose exec mysql mysql -uclassquest_app -pchange-me-locally classquest 
 curl.exe -s http://localhost:4000/health
 ```
 
-- [ ] Tables: `assets`, `jobs`, `request_metrics`, `resource_access`, `users`.
+- [ ] Tables: `assets`, `courses`, `jobs`, `request_metrics`, `resource_access`, `users`.
 - [ ] Three demo users: admin, teacher, student.
 - [ ] Health returns `"status":"healthy"` with all five dependencies `true`. `degraded-observability` means the App Tier could not reach CloudWatch or SNS — check `docker compose logs localstack`. (The CloudWatch client uses the Query protocol, the only one LocalStack 3.5 accepts; see `packages/shared/src/cloud/clients.ts`.)
 
-## 5. Sign in as Student (empty library)
+**Upgrading a stack that already has data** (resources uploaded before courses
+existed): the App Tier migrates the schema at start-up. Every existing resource
+is placed in one generated, published course called *General Library*, so
+students keep the access they had. Check it:
+
+```powershell
+docker compose exec mysql mysql -uclassquest_app -pchange-me-locally classquest -e "SELECT c.title, c.status, COUNT(a.id) AS resources FROM courses c LEFT JOIN assets a ON a.course_id = c.id GROUP BY c.id, c.title, c.status; SELECT COUNT(*) AS unassigned FROM assets WHERE course_id IS NULL;"
+```
+
+- [ ] *General Library* lists the old resources; `unassigned` is 0. (A fresh stack has no *General Library* course.)
+
+## 5. Sign in as Student (no courses yet)
 
 Open **http://localhost:8080** → sign in as `student@classquest.example` / `DemoStudent123!`.
 
-- [ ] Lands on **Home**; sidebar shows Home · Library · My Progress.
-- [ ] *Continue where you left off* shows the empty state.
-- [ ] Visit http://localhost:8080/operations, /dashboard and /publish — each redirects to **/home**.
+- [ ] Lands on **Home**; sidebar shows Home · Courses · My Progress.
+- [ ] *Continue where you left off* shows the empty state; *Your courses* says no courses yet (on a fresh stack).
+- [ ] Visit http://localhost:8080/library — redirects to **/courses**.
+- [ ] Visit http://localhost:8080/operations, /dashboard, /publish and /courses/new — each redirects to **/home**.
 - [ ] Sign out.
 
-## 6. Sign in as Teacher and seed
+## 6. Sign in as Teacher and seed the demo courses
 
 Sign in as `teacher@classquest.example` / `DemoTeacher123!`.
 
-- [ ] Lands on **Dashboard**; sidebar shows Dashboard · Library · Publish Resource · Operations, with the *Teacher Portal* subtitle.
+- [ ] Lands on **Dashboard**; sidebar shows Dashboard · My Courses · Publish Resource · Operations, with the *Teacher Portal* subtitle.
 - [ ] Visit http://localhost:8080/progress — redirects to **/dashboard**.
-- [ ] **Operations → Seed demo catalogue**: result says 4 new resources queued.
-- [ ] Within ~30 s, **Dashboard → Published resources** shows 4 and **Library** shows four completed resources.
+- [ ] **Operations → Seed demo catalogue**: result says 4 new courses and 11 new resources queued.
+- [ ] Within ~30 s, **Dashboard → Published resources** shows 11 (plus any older resources) and the *My Courses* card shows Published 3 · Draft 1.
+- [ ] **My Courses** shows Cloud Computing, Applied Blockchain, Data Analytics (*Published*) and Cybersecurity Essentials (*Draft*), each with its resource count. The *Draft* filter shows only Cybersecurity Essentials.
 
 (Alternative to the button: `npm run demo:seed`.)
 
-## 7. Upload a resource and watch the pipeline
+## 7. Create a course and add resources
 
-**Publish Resource** → **Document** → title `Acceptance test notes` → drop a small
-`.txt` or `.pdf` file → **Upload & publish**. In a second PowerShell window:
+**My Courses → Create Course** → title `Acceptance Course`, a description,
+category `Testing`, optionally a PNG/JPEG cover image → **Save as draft**.
+
+- [ ] The course page shows the cover (or a tinted placeholder), *Draft* badge and the note that students cannot see it.
+
+**Add Resource** → **Document** → title `Acceptance test notes`, week/section
+`Week 1` → drop a small `.txt` or `.pdf` file → **Upload & publish**. In a second PowerShell window:
 
 ```powershell
 docker compose logs -f worker
 ```
 
-- [ ] The stepper moves **Submitted → Queued → Processing → Completed**.
-- [ ] The worker log shows `job completed` for the job id. Press Ctrl+C to stop following.
+- [ ] The stepper moves **Submitted → Queued → Processing → Completed**; the worker log shows `job completed`. Press Ctrl+C to stop following.
+- [ ] **Back to course**: the resource is listed with *Week 1*, *Completed* and *Standard tier*. Add a second resource, then use the ↑/↓ arrows to reorder and the ✎ button to edit a description.
 - [ ] Optional: upload an `.mp4` as **Document** — the server rejects it with *Content type video/mp4 is not allowed for document*.
-
-## 8. Open a resource as Student and check My Progress
-
-Sign out → sign in as the student → **Library** → **Open Resource** on any card.
-
-- [ ] A new tab opens the file from `http://localhost:4566/classquest-media-assets-dev/...` (a presigned URL).
-- [ ] **My Progress**: Resources opened 1, Library coverage > 0 %, Last opened *Just now*, the resource listed under *Recently opened*.
-- [ ] **Home** shows the resource under *Continue where you left off*.
-- [ ] Click **Open again**, then verify the database:
+- [ ] Click **Publish Course** (the button changes to *Return to Draft*).
 
 ```powershell
-docker compose exec mysql mysql -uclassquest_app -pchange-me-locally classquest -e "SELECT asset_id, open_count, first_opened_at, last_opened_at FROM resource_access;"
+docker compose exec mysql mysql -uclassquest_app -pchange-me-locally classquest -e "SELECT c.title, c.status, a.title AS resource, a.section_label, a.display_order, a.status AS processing FROM courses c JOIN assets a ON a.course_id = c.id WHERE c.title = 'Acceptance Course' ORDER BY a.display_order;"
+docker compose exec localstack awslocal s3 ls s3://classquest-media-assets-dev/pictures/covers/ --recursive
+```
+
+- [ ] Rows show `published`, the resources in the order you set, `completed`; the cover (if uploaded) is listed in S3.
+
+## 8. Open resources as Student and check progress
+
+Sign out → sign in as the student → **Courses**.
+
+- [ ] The published courses are listed — including *Acceptance Course* — but **not** *Cybersecurity Essentials* (draft). Each card shows the teacher, resource count and *0 / N opened*.
+- [ ] Open **Cloud Computing**: four resources grouped under *Week 1*, *Week 2*, *Assessment*. Click **Open** on two of them — each opens a tab from `http://localhost:4566/classquest-media-assets-dev/...` (a presigned URL).
+- [ ] The course progress reads **2 / 4 resources opened · 50%**; opened resources show *Opened*.
+- [ ] **My Progress**: *By course* shows Cloud Computing 2 / 4 · 50%; totals, *By resource type* and *Recently opened* agree. **Home** shows the last resource under *Continue where you left off*.
+- [ ] Click **Open again** on one resource, then verify the database:
+
+```powershell
+docker compose exec mysql mysql -uclassquest_app -pchange-me-locally classquest -e "SELECT c.title AS course, a.title AS resource, ra.open_count, ra.first_opened_at, ra.last_opened_at FROM resource_access ra JOIN assets a ON a.id = ra.asset_id JOIN courses c ON c.id = a.course_id;"
 ```
 
 - [ ] One row per opened resource; `open_count` is 2 for the one opened twice.
 - [ ] Students cannot see job details: `/jobs` endpoints return 403 (covered by the automated tests).
+
+**Archive (teacher) → hidden (student):** as the teacher, **My Courses → Acceptance Course → Edit Course → Archive course**.
+
+- [ ] As the student, *Acceptance Course* is gone from **Courses** and **My Progress**; its old URL shows *This course is not available*.
+- [ ] As the teacher, the *Archived* filter on **My Courses** lists it; **Restore to draft** brings it back (then **Publish Course** to show it again).
 
 ## 9. Induce a worker failure — retries and the DLQ
 
 Sign in as the teacher → **Operations → Induce processing failure**.
 
 - [ ] The stepper shows *Attempt N failed — retrying automatically*, then **Failed** with *Processing failed after 3 attempts* (about 20–40 s).
+- [ ] The failed resource sits in the draft course *Operations Sandbox (DEMO)* (**My Courses → Draft**) with a *Failed* badge — never visible to students.
 - [ ] Worker log (`docker compose logs worker`) shows `will retry` twice and `job failed (final attempt); message left for SQS redrive to the DLQ`.
 - [ ] Within a few seconds the message is on the DLQ:
 
@@ -178,7 +211,7 @@ npm run test:acceptance
 
 - [ ] Typecheck and lint report no errors.
 - [ ] `test:unit` passes (no Docker needed).
-- [ ] `test:acceptance` runs the API, integration and e2e suites against the stack and passes. It **fails** (instead of skipping) if any service is unreachable. Only `tests/integration/progressDb.test.ts` is skipped, because it is opt-in. Takes about 1–2 minutes.
+- [ ] `test:acceptance` runs the API, integration and e2e suites against the stack and passes (54 tests). It **fails** (instead of skipping) if any service is unreachable. Only `tests/integration/progressDb.test.ts` is skipped (10 tests), because it is opt-in. Takes about 1–2 minutes.
 - [ ] Optional: `npm run test:all` runs everything in one go.
 
 Database suite against a disposable database in the Compose MySQL (it deletes rows, so never point it at `classquest`):
@@ -190,14 +223,14 @@ npx vitest run tests/integration/progressDb.test.ts
 Remove-Item Env:TEST_MYSQL_DATABASE, Env:TEST_MYSQL_USER, Env:TEST_MYSQL_PASSWORD
 ```
 
-- [ ] 5 tests pass.
+- [ ] 10 tests pass (course migration from the old schema, per-course progress, ordering, named lock).
 
 ## 12. Screenshots for the demo / report
 
 - [ ] Login page with the demo-account hint
-- [ ] Student **Home** (with *Continue where you left off*) and **My Progress**
-- [ ] **Library** as student (completed only) and as teacher (status + tier badges)
-- [ ] **Publish Resource** with a completed stepper and a failed (induced) stepper
+- [ ] Student **Home** (with *Continue where you left off* and *Your courses*), **Courses**, a **Course** page with progress, and **My Progress** (*By course*)
+- [ ] Teacher **My Courses**, **Create Course**, a **Course** page (ordered resources, status + tier badges) and **Library** (staff view)
+- [ ] **Add Resource** with a completed stepper and a failed (induced) stepper
 - [ ] **Teacher Dashboard**
 - [ ] **Operations**: monitoring card after the burst (*Threshold exceeded* + LocalStack limitation), Service health, Queue & job processing, Storage overview, Demonstration Controls results
 - [ ] PowerShell output: DLQ message count, `resource_access` rows, `s3api list-objects-v2` showing `GLACIER`

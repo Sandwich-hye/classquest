@@ -13,7 +13,7 @@ import { defaultRouteFor, guardRedirect, type Role } from '../navigation';
 export function RequireRole({ roles, children }: { roles: Role[]; children: ReactNode }) {
   const { session } = useAuth();
   const location = useLocation();
-  const target = guardRedirect(session?.role ?? null, roles);
+  const target = guardRedirect(session?.role ?? null, roles, location.pathname);
   if (target === '/login') return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (target) return <Navigate to={target} replace />;
   return <>{children}</>;

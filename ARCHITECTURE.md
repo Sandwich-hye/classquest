@@ -13,8 +13,9 @@
 
 ## 1. System overview
 
-ClassQuest is a K-12 learning platform where **teachers publish** documents,
-digital books and videos and **students open** them (`§1.2`). The report
+ClassQuest is a learning platform where **teachers publish** documents,
+digital books and videos — organised into **courses** — and **students open**
+them (`§1.2`). The report
 proposes moving a legacy on-premises three-tier deployment to a highly
 available, elastic, secure AWS three-tier architecture (`§1.3`, `§3`).
 
@@ -62,18 +63,18 @@ Secrets Manager — those exist only in the report's design.
 
 ```mermaid
 graph TD
-    spa["React SPA<br/>Student: Home · Library · My Progress<br/>Teacher: Dashboard · Library · Publish · Operations<br/>Admin: Operations · Library"]
+    spa["React SPA<br/>Student: Home · Courses · My Progress<br/>Teacher: Dashboard · My Courses · Publish · Operations<br/>Admin: Operations · Library"]
 
     subgraph web["Web Tier (port 8080)"]
         gw["Static SPA · rate limiting<br/>ALB-style access logs → CloudWatch Logs<br/>proxies /api/* (no JWT checks here)"]
     end
 
     subgraph app["Application Tier (port 4000)"]
-        api["JWT + role checks · zod validation<br/>assets · jobs · dashboard metrics<br/>/me/progress · demo (DEMO_MODE)"]
+        api["JWT + role checks · zod validation<br/>courses · assets · jobs · dashboard metrics<br/>/me/progress · demo (DEMO_MODE)"]
     end
 
     subgraph data["Data Tier"]
-        mysql[("MySQL 8<br/>users · assets · jobs<br/>request_metrics · resource_access")]
+        mysql[("MySQL 8<br/>users · courses · assets · jobs<br/>request_metrics · resource_access")]
         s3[("Amazon S3 (LocalStack)<br/>resources + lifecycle")]
     end
 
@@ -165,8 +166,8 @@ sequenceDiagram
 ```
 
 Opening a resource: `GET /api/assets/:id` returns a 5-minute presigned S3 URL.
-Students only receive completed assets (others return 404). For students, the
-same request records the open in `resource_access`.
+Students only receive completed assets of published courses (others return
+404). For students, the same request records the open in `resource_access`.
 
 ## 7. Job processing and dead-letter handling
 
@@ -186,19 +187,66 @@ same request records the open in `resource_access`.
 - **Known edge case.** If a worker crashes during the final attempt, SQS still
   redrives the message, but the job can remain `processing` in MySQL.
 
-## 8. Student progress (resource access)
+## 8. Courses
+
+A **course** groups resources; it is a domain layer on top of the unchanged
+asset pipeline (no new AWS services).
+
+```
+courses(id, title, description, category, cover_key, cover_content_type,
+        creator_id → users, status draft|published|archived, is_demo,
+        created_at, updated_at)
+assets(…existing columns…, course_id → courses NOT NULL, description,
+       section_label NULL, display_order)
+```
+
+- **Lifecycle.** `draft → published → draft`, `draft|published → archived`,
+  `archived → draft` (never straight back to published). Teachers manage only
+  the courses they created; admins manage any course.
+- **Visibility.** Students see a resource only when it is `completed` **and**
+  its course is `published` — in `GET /courses`, `GET /courses/:id`,
+  `GET /assets` and `GET /assets/:id` (presigned URL) alike. Drafts and
+  archived courses answer 404 to students. Archived courses keep their
+  resources and access history but accept no new resources.
+- **Upload into a course.** `POST /assets` requires `courseId` (plus optional
+  `description`, `sectionLabel`, `displayOrder`). The App Tier checks the
+  course (exists, caller manages it, not archived) and then runs the same
+  `publishAsset` write order as before: S3 → MySQL (`submitted → queued`) →
+  SQS → Worker.
+- **Order.** `display_order` (ascending, ties by creation time); new
+  resources are appended. `PUT /courses/:id/order` re-numbers the whole list
+  in one transaction.
+- **Covers.** Optional PNG/JPEG/WebP (≤ 2 MB) stored in the same bucket under
+  `pictures/covers/<courseId>/` and shown through 15-minute presigned URLs;
+  without one, a category-tinted placeholder is drawn. The Web Tier CSP allows
+  images from the browser-facing S3 endpoint for this.
+
+**Migration (additive, idempotent, under a MySQL named lock).** The App Tier
+creates `courses`, adds the four asset columns (with `course_id` nullable at
+first), then gives any asset without a course to one generated, **published**
+course, *General Library* (fixed id `00000000-0000-4000-8000-000000000001`,
+owned by the uploader of the oldest such asset), and finally makes
+`course_id` `NOT NULL` with an index and a foreign key. This was preferred
+over leaving `course_id` nullable: every resource then belongs to exactly one
+course, the student visibility rule has no "unassigned" special case, and
+students keep exactly the access they had before the upgrade. Teachers can
+move those resources into other courses from the course page.
+
+## 9. Student progress (resource access)
 
 `resource_access(user_id, asset_id, first_opened_at, last_opened_at,
 open_count)` records which completed resources each student has opened. An
 open is recorded only when a student successfully obtains a presigned URL; a
 tracking failure never blocks access. `GET /me/progress` (students only)
-returns `available`, `opened`, `coverage`, `lastOpenedAt`, per-type counts and
-recent opens.
+returns `available`, `opened`, `coverage`, `lastOpenedAt`, per-type counts,
+per-course counts (`courses[]`: opened, available, coverage) and recent opens.
+Only completed resources of published courses count, on both sides, so
+`opened ≤ available` everywhere.
 
 This is **access tracking only** — it does not measure grades, mastery, time
 spent or lesson completion.
 
-## 9. Deployment (prototype runtime)
+## 10. Deployment (prototype runtime)
 
 ```mermaid
 graph TD
@@ -219,7 +267,7 @@ graph TD
 Start order: LocalStack and MySQL (healthy) → Terraform apply → App Tier
 (migrates schema, creates demo users) → Worker and Web Tier.
 
-## 10. Components
+## 11. Components
 
 | Component | Responsibility | Report § |
 |-----------|----------------|----------|
@@ -230,7 +278,7 @@ Start order: LocalStack and MySQL (healthy) → Terraform apply → App Tier
 | `packages/shared` | Config, logging, domain, DB + migrations, AWS clients | §6, §7 |
 | `infra/terraform` | S3, SQS + DLQ, SNS, CloudWatch, IAM (LocalStack or AWS target) | §2.7, §3.9 |
 
-## 11. Security (summary — see `SECURITY.md`)
+## 12. Security (summary — see `SECURITY.md`)
 
 - JWT (1 h) + bcrypt; role checks in the **App Tier** on every protected route.
   The Web Tier only proxies.
@@ -240,7 +288,7 @@ Start order: LocalStack and MySQL (healthy) → Terraform apply → App Tier
 - S3 Block Public Access; downloads via short-lived presigned URLs only.
 - zod validation and a file-type/size allow-list; parameterised SQL.
 
-## 12. Scalability and availability
+## 13. Scalability and availability
 
 - Web, App and Worker tiers are stateless; workers scale with
   `docker compose up -d --scale worker=3`.
@@ -248,7 +296,7 @@ Start order: LocalStack and MySQL (healthy) → Terraform apply → App Tier
 - Production availability (multi-AZ, RDS failover, health-checked load
   balancers) is part of the report design, not exercised locally.
 
-## 13. Monitoring
+## 14. Monitoring
 
 - Structured JSON logs (pino) with secret redaction.
 - Web Tier writes one ALB-style JSON access-log event per request to
@@ -258,7 +306,7 @@ Start order: LocalStack and MySQL (healthy) → Terraform apply → App Tier
   from that log because LocalStack Community does not evaluate the alarm.
 - See `docs/OBSERVABILITY.md`.
 
-## 14. Failure scenarios
+## 15. Failure scenarios
 
 | Scenario | Behaviour |
 |----------|-----------|
@@ -270,7 +318,7 @@ Start order: LocalStack and MySQL (healthy) → Terraform apply → App Tier
 | CloudWatch or SNS down | `/health` reports `degraded-observability` (200); app keeps serving |
 | Invalid upload | 400/413 with a sanitised message; nothing stored |
 
-## 15. Prototype limitations
+## 16. Prototype limitations
 
 1. Only S3, SQS, SNS, CloudWatch and IAM are provisioned (on LocalStack); the
    production network/compute/database layer is documented only (§2).
@@ -281,7 +329,8 @@ Start order: LocalStack and MySQL (healthy) → Terraform apply → App Tier
    storage class; restore and retrieval latency are not emulated.
 4. IAM is not enforced by LocalStack Community, and the app role does not yet
    include every action the app performs (see `SECURITY.md`).
-5. The Teacher Dashboard and Recent Resources are library-wide: assets record
-   an owner, but there is no per-teacher filter.
+5. The Teacher Dashboard's pipeline counts and Recent Resources are
+   library-wide; only its *My Courses* card is limited to the teacher's own
+   courses. There are no per-teacher or per-student analytics.
 6. Worker "processing" only reads the object back from S3.
 7. All data is synthetic `DEMO/SAMPLE`; no real TLS, DNS or billing locally.

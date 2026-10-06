@@ -38,6 +38,15 @@ const PATHS: Record<IconName, string[]> = {
   snowflake: ['M12 2v20', 'M4.9 7l14.2 10', 'M4.9 17l14.2-10', 'M9 4l3 3 3-3', 'M9 20l3-3 3 3'],
   terminal: ['M4 17l6-6-6-6', 'M12 19h8'],
   info: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 11v5', 'M12 8h.01'],
+  course: ['M22 9 12 4 2 9l10 5 10-5Z', 'M6 11.2V16c3.2 2.4 8.8 2.4 12 0v-4.8', 'M22 9v6'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  edit: ['M4 20h4L19 9l-4-4L4 16v4Z', 'M13.5 6.5l4 4'],
+  'arrow-up': ['M12 19V5', 'M6 11l6-6 6 6'],
+  'arrow-down': ['M12 5v14', 'M18 13l-6 6-6-6'],
+  'arrow-left': ['M19 12H5', 'M11 6l-6 6 6 6'],
+  image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15 9h.01'],
+  user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M4 21a8 8 0 0 1 16 0'],
+  layers: ['M12 3 2 8l10 5 10-5Z', 'M2 13l10 5 10-5'],
 };
 
 export function Icon({ name, size = 20, className }: { name: IconName; size?: number; className?: string }) {

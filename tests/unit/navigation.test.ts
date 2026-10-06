@@ -10,15 +10,23 @@ import {
   isRole,
   routeLabel,
   guardRedirect,
+  matchRoute,
   ROUTES,
 } from '../../apps/frontend/src/navigation.js';
 import { initialsOf } from '../../apps/frontend/src/components/ui/Avatar.js';
 
 describe('role navigation', () => {
   it('gives each role its approved sidebar, in order', () => {
-    expect(navFor('student').map((r) => r.path)).toEqual(['/home', '/library', '/progress']);
-    expect(navFor('teacher').map((r) => r.path)).toEqual(['/dashboard', '/library', '/publish', '/operations']);
+    expect(navFor('student').map((r) => r.path)).toEqual(['/home', '/courses', '/progress']);
+    expect(navFor('teacher').map((r) => r.path)).toEqual(['/dashboard', '/courses', '/publish', '/operations']);
     expect(navFor('admin').map((r) => r.path)).toEqual(['/operations', '/library']);
+  });
+
+  it('labels the course list per role', () => {
+    expect(navFor('student').map((r) => r.label)).toEqual(['Home', 'Courses', 'My Progress']);
+    expect(navFor('teacher').map((r) => r.label)).toEqual(['Dashboard', 'My Courses', 'Publish Resource', 'Operations']);
+    expect(routeLabel('/courses', 'teacher')).toBe('My Courses');
+    expect(routeLabel('/courses', 'student')).toBe('Courses');
   });
 
   it('uses the approved default routes', () => {
@@ -34,6 +42,22 @@ describe('role navigation', () => {
     expect(canAccess('admin', '/publish')).toBe(false);
     expect(canAccess('admin', '/dashboard')).toBe(false);
     expect(canAccess('admin', '/library')).toBe(true);
+    expect(canAccess('student', '/library')).toBe(false);
+    expect(canAccess('admin', '/courses')).toBe(false);
+  });
+
+  it('matches course routes, preferring literal paths over patterns', () => {
+    expect(matchRoute('/courses/new')).toBe(ROUTES.courseNew);
+    expect(matchRoute('/courses/abc-123')).toBe(ROUTES.courseDetail);
+    expect(matchRoute('/courses/abc-123/edit')).toBe(ROUTES.courseEdit);
+    expect(matchRoute('/courses/abc-123/resources/new')).toBe(ROUTES.courseAddResource);
+    expect(matchRoute('/courses/abc-123/unknown')).toBeUndefined();
+    expect(canAccess('student', '/courses/abc-123')).toBe(true);
+    expect(canAccess('student', '/courses/new')).toBe(false);
+    expect(canAccess('student', '/courses/abc-123/edit')).toBe(false);
+    expect(canAccess('student', '/courses/abc-123/resources/new')).toBe(false);
+    expect(canAccess('teacher', '/courses/abc-123/resources/new')).toBe(true);
+    expect(canAccess('admin', '/courses/abc-123')).toBe(false);
   });
 
   it('keeps route roles and sidebars consistent', () => {
@@ -49,23 +73,39 @@ describe('role navigation', () => {
     expect(isRole('superuser')).toBe(false);
     expect(isRole(null)).toBe(false);
     expect(routeLabel('/progress')).toBe('My Progress');
+    expect(routeLabel('/courses/x/edit')).toBe('Edit Course');
     expect(routeLabel('/nope')).toBeUndefined();
   });
 });
 
 describe('route guard decisions (RequireRole)', () => {
-  const ALL = ['/home', '/library', '/progress', '/dashboard', '/publish', '/operations'];
+  const ALL = ['/home', '/courses', '/courses/new', '/courses/c1', '/courses/c1/edit', '/courses/c1/resources/new', '/library', '/progress', '/dashboard', '/publish', '/operations'];
   const expected: Record<'student' | 'teacher' | 'admin', Record<string, string | null>> = {
-    student: { '/home': null, '/library': null, '/progress': null, '/dashboard': '/home', '/publish': '/home', '/operations': '/home' },
-    teacher: { '/home': '/dashboard', '/library': null, '/progress': '/dashboard', '/dashboard': null, '/publish': null, '/operations': null },
-    admin: { '/home': '/operations', '/library': null, '/progress': '/operations', '/dashboard': '/operations', '/publish': '/operations', '/operations': null },
+    student: {
+      '/home': null, '/courses': null, '/courses/new': '/home', '/courses/c1': null, '/courses/c1/edit': '/home',
+      '/courses/c1/resources/new': '/home', '/library': '/courses', '/progress': null, '/dashboard': '/home', '/publish': '/home', '/operations': '/home',
+    },
+    teacher: {
+      '/home': '/dashboard', '/courses': null, '/courses/new': null, '/courses/c1': null, '/courses/c1/edit': null,
+      '/courses/c1/resources/new': null, '/library': null, '/progress': '/dashboard', '/dashboard': null, '/publish': null, '/operations': null,
+    },
+    admin: {
+      '/home': '/operations', '/courses': '/operations', '/courses/new': '/operations', '/courses/c1': '/operations', '/courses/c1/edit': '/operations',
+      '/courses/c1/resources/new': '/operations', '/library': null, '/progress': '/operations', '/dashboard': '/operations', '/publish': '/operations', '/operations': null,
+    },
   };
 
   it.each(['student', 'teacher', 'admin'] as const)('%s: allowed routes render, others redirect to the default page', (role) => {
     for (const path of ALL) {
-      const route = Object.values(ROUTES).find((r) => r.path === path)!;
-      expect(guardRedirect(role, route.roles), `${role} ${path}`).toBe(expected[role][path]);
+      const route = matchRoute(path)!;
+      expect(guardRedirect(role, route.roles, path), `${role} ${path}`).toBe(expected[role][path]);
     }
+  });
+
+  it('sends students from the old /library URL to /courses (no broken bookmark)', () => {
+    expect(guardRedirect('student', ROUTES.library.roles, '/library')).toBe('/courses');
+    // Without the path the generic default applies.
+    expect(guardRedirect('student', ROUTES.library.roles)).toBe('/home');
   });
 
   it('signed-out visitors are sent to /login from every route', () => {

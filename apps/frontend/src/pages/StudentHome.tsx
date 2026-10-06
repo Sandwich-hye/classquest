@@ -1,35 +1,41 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type ApiError, type Asset, type StudentProgress } from '../api';
+import { api, type ApiError, type StudentCourse, type StudentProgress } from '../api';
 import { useAuth } from '../auth';
-import { fileKind, formatBytes, searchAndSort, TYPE_LABEL } from '../lib/assets';
+import { fileKind, formatBytes, TYPE_LABEL } from '../lib/assets';
 import { useOpenResource } from '../lib/openResource';
 import { cleanName, coveragePercent, formatRelative } from '../lib/progress';
 import { PageHeader } from '../components/shell/PageHeader';
-import { ResourceCard } from '../components/ResourceCard';
+import { CourseCard } from '../components/courses/CourseCard';
 import { Badge, Button, Card, EmptyState, Icon, ProgressBar, StatCard } from '../components/ui';
 
 const HOW_IT_WORKS = [
-  { title: 'Browse resources', body: 'Find documents, books and videos your teachers have published in the Library.', icon: 'library' as const },
+  { title: 'Choose a course', body: 'Your teachers publish courses with slides, readings and recordings.', icon: 'course' as const },
   { title: 'Open learning materials', body: 'Each resource opens through a secure, time-limited link.', icon: 'external' as const },
-  { title: 'See what you have opened', body: 'Resources you open appear in My Progress, so you can pick them up again.', icon: 'progress' as const },
+  { title: 'See what you have opened', body: 'My Progress shows the resources you have opened in each course.', icon: 'progress' as const },
 ];
+
+/** Courses to feature on Home: most recently opened first, then unstarted ones by title. */
+function featured(courses: StudentCourse[]): StudentCourse[] {
+  const opened = (c: StudentCourse) => (c.lastOpenedAt ? Date.parse(c.lastOpenedAt) : 0);
+  return [...courses].sort((a, b) => opened(b) - opened(a) || a.title.localeCompare(b.title)).slice(0, 3);
+}
 
 /**
  * Student Home. Real data only: the student's opens from GET /me/progress and
- * the newest completed resources from GET /assets.
+ * the published courses (with the student's progress) from GET /courses.
  */
 export function StudentHome() {
   const { session } = useAuth();
   const [progress, setProgress] = useState<StudentProgress | null>(null);
-  const [latest, setLatest] = useState<Asset[] | null>(null);
+  const [courses, setCourses] = useState<StudentCourse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [p, a] = await Promise.allSettled([api.progress(), api.listAssets()]);
+    const [p, c] = await Promise.allSettled([api.progress(), api.listStudentCourses()]);
     if (p.status === 'fulfilled') setProgress(p.value);
-    if (a.status === 'fulfilled') setLatest(searchAndSort(a.value.assets, '', 'newest').slice(0, 3));
-    const failed = [p, a].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    if (c.status === 'fulfilled') setCourses(c.value.courses);
+    const failed = [p, c].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
     setError(failed ? ((failed.reason as ApiError)?.message ?? 'Some information could not be loaded') : null);
   }, []);
 
@@ -46,7 +52,7 @@ export function StudentHome() {
       <PageHeader
         eyebrow="Learning portal"
         title={`Welcome back, ${name}`}
-        description="Pick up where you left off, or explore what's new in the library."
+        description="Pick up where you left off, or continue one of your courses."
       />
 
       {error && <p className="cq-stale" role="status">{error}</p>}
@@ -59,8 +65,8 @@ export function StudentHome() {
             <EmptyState
               icon="library"
               title="You haven't opened any resources yet"
-              description="Browse the Library and open a resource — it will appear here next time."
-              action={<Link className="cq-btn cq-btn--primary" to="/library">Go to Library</Link>}
+              description="Open a resource in one of your courses — it will appear here next time."
+              action={<Link className="cq-btn cq-btn--primary" to="/courses">Browse courses</Link>}
             />
           ) : (
             <div className="cq-continue__item">
@@ -74,7 +80,8 @@ export function StudentHome() {
                 </div>
                 <h3 className="cq-continue__title">{last.asset.title}</h3>
                 <p className="cq-small">
-                  {fileKind(last.asset.contentType)} · {formatBytes(last.asset.sizeBytes)} · Last opened {formatRelative(last.lastOpenedAt)}
+                  <Link to={`/courses/${last.asset.courseId}`}>{last.asset.courseTitle}</Link> · {fileKind(last.asset.contentType)} ·{' '}
+                  {formatBytes(last.asset.sizeBytes)} · Last opened {formatRelative(last.lastOpenedAt)}
                 </p>
                 <div>
                   <Button iconRight="external" onClick={() => void open(last.asset.id)} disabled={openingId === last.asset.id}>
@@ -89,7 +96,7 @@ export function StudentHome() {
 
         <Card
           className="cq-home-summary"
-          title="Your library activity"
+          title="Your activity"
           action={<Link className="cq-btn cq-btn--link" to="/progress">My Progress</Link>}
         >
           {!progress ? (
@@ -101,8 +108,8 @@ export function StudentHome() {
                 <StatCard label="Available" value={progress.available} unit={progress.available === 1 ? 'resource' : 'resources'} tone="callout" icon="library" />
               </div>
               <div className="cq-home-summary__coverage">
-                <span className="cq-small">Library coverage</span>
-                <ProgressBar value={coveragePercent(progress.opened, progress.available)} showLabel label="Library coverage" />
+                <span className="cq-small">Resources opened across your courses</span>
+                <ProgressBar value={coveragePercent(progress.opened, progress.available)} showLabel label="Resources opened across courses" />
               </div>
               <p className="cq-small">Counts resources you have opened — not grades or lesson completion.</p>
             </>
@@ -110,21 +117,21 @@ export function StudentHome() {
         </Card>
       </div>
 
-      <section className="cq-ops-section" aria-labelledby="new-title">
+      <section className="cq-ops-section" aria-labelledby="courses-title">
         <div className="cq-section-head">
-          <h2 id="new-title" className="cq-section-title">New in Library</h2>
-          <Link className="cq-btn cq-btn--link" to="/library">View all</Link>
+          <h2 id="courses-title" className="cq-section-title">Your courses</h2>
+          <Link className="cq-btn cq-btn--link" to="/courses">View all courses</Link>
         </div>
-        {!latest ? (
+        {!courses ? (
           <p className="cq-small">Loading…</p>
-        ) : latest.length === 0 ? (
+        ) : courses.length === 0 ? (
           <Card>
-            <EmptyState icon="library" title="No resources yet" description="Resources appear here once your teachers publish them." />
+            <EmptyState icon="course" title="No courses yet" description="Courses appear here once your teachers publish them." />
           </Card>
         ) : (
-          <div className="cq-resource-grid">
-            {latest.map((a) => (
-              <ResourceCard key={a.id} asset={a} showPipeline={false} onOpened={() => void load()} />
+          <div className="cq-course-grid">
+            {featured(courses).map((c) => (
+              <CourseCard key={c.id} variant="student" course={c} />
             ))}
           </div>
         )}

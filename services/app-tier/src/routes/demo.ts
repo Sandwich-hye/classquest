@@ -12,6 +12,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import {
   userRepo,
   assetRepo,
+  courseRepo,
   hashPassword,
   requireAuth,
   requireRole,
@@ -20,7 +21,7 @@ import {
   LockTimeoutError,
 } from '@classquest/shared';
 import { storage, config } from '../services.js';
-import { loadSampleUsers, loadSampleCatalog, loadSampleAsset } from '../sampleData.js';
+import { loadSampleUsers, loadSampleCatalog, loadSampleCourses, loadSampleAsset } from '../sampleData.js';
 import { ApiError } from '../middleware.js';
 import { publishAsset } from '../publish.js';
 
@@ -70,11 +71,14 @@ demoRouter.use(requireAuth, requireRole('teacher', 'admin'));
 export const SEED_LOCK = 'classquest:demo-seed';
 
 /**
- * POST /demo/seed — ensure demo users exist and publish the sample catalog.
- * Catalog entries already present (same title, demo-flagged) are skipped, so
- * repeated seeding does not duplicate assets. Concurrent requests are
- * serialised with a database lock; otherwise two seeds could both see an
- * entry as missing and both insert it. Never returns passwords.
+ * POST /demo/seed — ensure demo users exist, then the sample courses
+ * (courses.json) and their resources (catalog.json). Courses are matched by
+ * title among demo courses and never modified once they exist (a teacher may
+ * have edited or archived them). Resources are matched by title within their
+ * course and published through the normal upload path, so repeated seeding
+ * does not duplicate anything. Concurrent requests are serialised with a
+ * database lock; otherwise two seeds could both see an entry as missing and
+ * both insert it. Never returns passwords.
  */
 demoRouter.post('/seed', async (_req: Request, res: Response, next: NextFunction) => {
   try {
@@ -88,36 +92,69 @@ async function seedCatalog() {
   await ensureDemoUsers();
   const users = await loadSampleUsers();
   const ownerId = await demoTeacherId();
-  const existing = new Set(
-    (await assetRepo.list()).filter((a) => a.isDemo).map((a) => a.title),
-  );
 
-  const catalog = await loadSampleCatalog();
-  const created: Array<{ assetId: string; jobId: string; title: string }> = [];
+  const courseIds = new Map<string, string>();
+  const coursesCreated: string[] = [];
+  for (const c of await loadSampleCourses()) {
+    let course = await courseRepo.findDemoByTitle(c.title);
+    if (!course) {
+      course = await courseRepo.create({ ...c, creatorId: ownerId, isDemo: true });
+      coursesCreated.push(c.title);
+    }
+    courseIds.set(c.title, course.id);
+  }
+
+  const existing = await assetRepo.demoKeys();
+  const created: Array<{ assetId: string; jobId: string; title: string; course: string }> = [];
   const skipped: string[] = [];
-  for (const entry of catalog) {
-    if (existing.has(entry.title)) {
+  for (const entry of await loadSampleCatalog()) {
+    const courseId = courseIds.get(entry.course);
+    if (!courseId) throw new Error(`catalog.json: unknown course "${entry.course}" for "${entry.title}"`);
+    if (existing.has(`${courseId}\u0000${entry.title}`)) {
       skipped.push(entry.title);
       continue;
     }
     const { asset, jobId } = await publishAsset({
       ownerId,
+      courseId,
       title: entry.title,
+      description: entry.description,
+      sectionLabel: entry.section,
+      displayOrder: entry.order,
       type: entry.type,
       body: await loadSampleAsset(entry.filename),
       contentType: entry.contentType,
       originalName: entry.filename,
       isDemo: true,
     });
-    created.push({ assetId: asset.id, jobId, title: entry.title });
+    created.push({ assetId: asset.id, jobId, title: entry.title, course: entry.course });
   }
 
   return {
     message: 'Demo data seeded (all records labelled DEMO/SAMPLE).',
     users: users.map((u) => ({ email: u.email, role: u.role })),
+    courses: { created: coursesCreated, total: courseIds.size },
     assets: created,
     skipped,
   };
+}
+
+/** Draft demo course that holds resources created by the Operations controls. */
+const SANDBOX_COURSE = {
+  title: 'Operations Sandbox (DEMO)',
+  category: 'Operations',
+  description:
+    'Holds resources created by the Operations demonstration controls, such as the induced processing failure. ' +
+    'Kept as a draft so students never see it.',
+};
+const SANDBOX_LOCK = 'classquest:demo-sandbox';
+
+async function sandboxCourseId(ownerId: string): Promise<string> {
+  return withNamedLock(SANDBOX_LOCK, 10, async () => {
+    const existing = await courseRepo.findDemoByTitle(SANDBOX_COURSE.title);
+    if (existing) return existing.id;
+    return (await courseRepo.create({ ...SANDBOX_COURSE, status: 'draft', creatorId: ownerId, isDemo: true })).id;
+  });
 }
 
 /**
@@ -127,8 +164,10 @@ async function seedCatalog() {
  */
 demoRouter.post('/induce-failure', async (_req: Request, res: Response, next: NextFunction) => {
   try {
+    const ownerId = await demoTeacherId();
     const { asset, jobId } = await publishAsset({
-      ownerId: await demoTeacherId(),
+      ownerId,
+      courseId: await sandboxCourseId(ownerId),
       title: 'DEMO — Induced failure (expected to fail)',
       type: 'document',
       body: Buffer.from('DEMO poison message — intentionally fails processing.\n'),

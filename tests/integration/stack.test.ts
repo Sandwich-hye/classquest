@@ -25,6 +25,8 @@ const available = await stackAvailable('Integration tests (tests/integration/sta
 
 const RUN = Date.now().toString(36);
 const auth: Record<'student' | 'teacher' | 'admin', { token: string; sub: string }> = {} as never;
+/** Published course that this run's uploads go into. */
+let courseId = '';
 const uploaded: Record<'document' | 'book' | 'video', { assetId: string; jobId: string; data: Buffer; contentType: string }> = {} as never;
 
 async function waitForJob(jobId: string, states = ['completed', 'failed']) {
@@ -41,6 +43,12 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
     auth.student = await login(API, 'student');
     auth.teacher = await login(API, 'teacher');
     auth.admin = await login(API, 'admin');
+    const course = await call(API, '/courses', {
+      token: auth.teacher.token,
+      json: { title: `ACCEPT ${RUN} course`, description: 'Acceptance run', category: 'Acceptance', status: 'published' },
+    });
+    expect(course.status, JSON.stringify(course.body)).toBe(201);
+    courseId = course.body.course.id;
   }, 30_000);
 
   afterAll(async () => {
@@ -126,7 +134,7 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
         const data = await readFile(new URL(`../../sample-data/assets/${samples[type].file}`, import.meta.url));
         const r = await call(API, '/assets', {
           token: auth.teacher.token,
-          form: fileForm({ title: `ACCEPT ${RUN} ${type}`, type }, { name: samples[type].file, type: samples[type].contentType, data }),
+          form: fileForm({ courseId, title: `ACCEPT ${RUN} ${type}`, type }, { name: samples[type].file, type: samples[type].contentType, data }),
         });
         expect(r.status, JSON.stringify(r.body)).toBe(202);
         expect(r.body.status).toBe('queued');
@@ -138,7 +146,7 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
 
         // MySQL: asset + job rows
         const [asset] = await rows('SELECT * FROM assets WHERE id = ?', [r.body.assetId]);
-        expect(asset).toMatchObject({ type, status: 'completed', content_type: samples[type].contentType, s3_bucket: names.bucket });
+        expect(asset).toMatchObject({ type, status: 'completed', content_type: samples[type].contentType, s3_bucket: names.bucket, course_id: courseId });
         expect(Number(asset!.size_bytes)).toBe(data.length);
         const [jobRow] = await rows('SELECT * FROM jobs WHERE id = ?', [r.body.jobId]);
         expect(jobRow).toMatchObject({ asset_id: r.body.assetId, state: 'completed', attempts: 1 });
@@ -154,23 +162,28 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
       }, 60_000);
     }
 
-    it('rejects unsupported MIME types, missing titles, missing files and student uploads — storing nothing', async () => {
+    it('rejects unsupported MIME types, missing titles, courses or files and student uploads — storing nothing', async () => {
       const [{ n: before }] = (await rows('SELECT COUNT(*) AS n FROM assets')) as Row[];
       const mp4 = { name: 'clip.mp4', type: 'video/mp4', data: Buffer.from('x') };
 
-      const wrongType = await call(API, '/assets', { token: auth.teacher.token, form: fileForm({ title: 'x', type: 'document' }, mp4) });
+      const wrongType = await call(API, '/assets', { token: auth.teacher.token, form: fileForm({ courseId, title: 'x', type: 'document' }, mp4) });
       expect(wrongType.status).toBe(400);
       expect(wrongType.body.error.code).toBe('UNSUPPORTED_CONTENT_TYPE');
 
-      const noTitle = await call(API, '/assets', { token: auth.teacher.token, form: fileForm({ type: 'video' }, mp4) });
+      const noTitle = await call(API, '/assets', { token: auth.teacher.token, form: fileForm({ courseId, type: 'video' }, mp4) });
       expect(noTitle.status).toBe(400);
       expect(noTitle.body.error.code).toBe('VALIDATION_ERROR');
 
-      const noFile = await call(API, '/assets', { token: auth.teacher.token, form: fileForm({ title: 'x', type: 'video' }) });
+      const noCourse = await call(API, '/assets', { token: auth.teacher.token, form: fileForm({ title: 'x', type: 'video' }, mp4) });
+      expect(noCourse.status).toBe(400);
+      expect(noCourse.body.error.code).toBe('VALIDATION_ERROR');
+      expect(noCourse.body.error.message).toMatch(/courseId/);
+
+      const noFile = await call(API, '/assets', { token: auth.teacher.token, form: fileForm({ courseId, title: 'x', type: 'video' }) });
       expect(noFile.status).toBe(400);
       expect(noFile.body.error.code).toBe('NO_FILE');
 
-      const student = await call(API, '/assets', { token: auth.student.token, form: fileForm({ title: 'x', type: 'video' }, mp4) });
+      const student = await call(API, '/assets', { token: auth.student.token, form: fileForm({ courseId, title: 'x', type: 'video' }, mp4) });
       expect(student.status).toBe(403);
 
       const [{ n: after }] = (await rows('SELECT COUNT(*) AS n FROM assets')) as Row[];
@@ -180,7 +193,7 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
     it('?induceFailure=true on the normal upload endpoint is ignored', async () => {
       const r = await call(API, '/assets?induceFailure=true', {
         token: auth.teacher.token,
-        form: fileForm({ title: `ACCEPT ${RUN} not-induced`, type: 'document' }, { name: 'n.txt', type: 'text/plain', data: Buffer.from('ok') }),
+        form: fileForm({ courseId, title: `ACCEPT ${RUN} not-induced`, type: 'document' }, { name: 'n.txt', type: 'text/plain', data: Buffer.from('ok') }),
       });
       expect(r.status).toBe(202);
       expect((await waitForJob(r.body.jobId)).body.state).toBe('completed');
@@ -230,6 +243,7 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
       const studentList = await call(API, '/assets', { token: auth.student.token });
       expect(studentList.body.assets.length).toBeGreaterThan(0);
       expect(studentList.body.assets.every((a: Row) => a.status === 'completed')).toBe(true);
+      expect(studentList.body.assets.every((a: Row) => a.courseStatus === 'published')).toBe(true);
       expect(studentList.body.assets.some((a: Row) => a.id === pendingId)).toBe(false);
 
       // Students cannot obtain a presigned URL for it; staff can.
@@ -297,10 +311,14 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
       await call(API, `/assets/${uploaded.book.assetId}`, { token: auth.student.token }); // now the most recent
       const p = (await call(API, '/me/progress', { token: auth.student.token })).body;
 
-      const avail = await rows(`SELECT type, COUNT(*) AS n FROM assets WHERE status = 'completed' GROUP BY type`);
+      // Students can reach completed resources of published courses only; both sides count just those.
+      const avail = await rows(
+        `SELECT a.type, COUNT(*) AS n FROM assets a JOIN courses c ON c.id = a.course_id
+         WHERE a.status = 'completed' AND c.status = 'published' GROUP BY a.type`,
+      );
       const opened = await rows(
-        `SELECT a.type, COUNT(*) AS n FROM resource_access ra JOIN assets a ON a.id = ra.asset_id
-         WHERE ra.user_id = ? AND a.status = 'completed' GROUP BY a.type`,
+        `SELECT a.type, COUNT(*) AS n FROM resource_access ra JOIN assets a ON a.id = ra.asset_id JOIN courses c ON c.id = a.course_id
+         WHERE ra.user_id = ? AND a.status = 'completed' AND c.status = 'published' GROUP BY a.type`,
         [auth.student.sub],
       );
       const count = (list: Row[], type: string) => Number(list.find((r) => r.type === type)?.n ?? 0);
@@ -321,12 +339,163 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
       expect(p.lastOpenedAt).toBe(p.recent[0].lastOpenedAt);
       expect(p).not.toHaveProperty('grade');
       expect(p).not.toHaveProperty('mastery');
+
+      // Per course: each published course's counts match the database too.
+      const perCourse = await rows(
+        `SELECT c.id, COUNT(a.id) AS available, COUNT(ra.asset_id) AS opened
+         FROM courses c
+         LEFT JOIN assets a ON a.course_id = c.id AND a.status = 'completed'
+         LEFT JOIN resource_access ra ON ra.asset_id = a.id AND ra.user_id = ?
+         WHERE c.status = 'published' GROUP BY c.id`,
+        [auth.student.sub],
+      );
+      expect(p.courses).toHaveLength(perCourse.length);
+      for (const c of p.courses) {
+        const db = perCourse.find((r) => r.id === c.courseId)!;
+        expect(c, c.title).toMatchObject({ available: Number(db.available), opened: Number(db.opened) });
+        expect(c.coverage).toBeCloseTo(Number(db.available) ? Number(db.opened) / Number(db.available) : 0, 3);
+      }
+      const mine = p.courses.find((c: Row) => c.courseId === courseId);
+      expect(mine).toMatchObject({ available: 4, opened: 2 }); // this run's course: 4 completed uploads, video + book opened
     });
 
     it('/me/progress is student-only', async () => {
       expect((await call(API, '/me/progress', { token: auth.teacher.token })).status).toBe(403);
       expect((await call(API, '/me/progress', { token: auth.admin.token })).status).toBe(403);
       expect((await call(API, '/me/progress')).status).toBe(401);
+    });
+  });
+
+  // ---------------------------------------------------------------- courses
+  describe('courses: lifecycle, visibility and per-course progress', () => {
+    let draftId = '';
+    let resourceId = '';
+
+    it('seeded demo courses group several resources each; the draft course is hidden from students', async () => {
+      const seeded = await rows(
+        `SELECT c.title, c.status, COUNT(a.id) AS n FROM courses c JOIN assets a ON a.course_id = c.id
+         WHERE c.is_demo = 1 AND c.title IN ('Cloud Computing', 'Applied Blockchain', 'Data Analytics', 'Cybersecurity Essentials')
+         GROUP BY c.id, c.title, c.status`,
+      );
+      expect(seeded.map((r) => r.title).sort()).toEqual(['Applied Blockchain', 'Cloud Computing', 'Cybersecurity Essentials', 'Data Analytics']);
+      for (const r of seeded) {
+        if (r.title !== 'Cybersecurity Essentials') expect(Number(r.n), r.title).toBeGreaterThanOrEqual(3);
+      }
+      const studentCourses = (await call(API, '/courses', { token: auth.student.token })).body.courses as Row[];
+      const titles = studentCourses.map((c) => c.title);
+      expect(titles).toEqual(expect.arrayContaining(['Cloud Computing', 'Applied Blockchain', 'Data Analytics']));
+      expect(titles).not.toContain('Cybersecurity Essentials');
+      expect(studentCourses.every((c) => c.status === 'published')).toBe(true);
+
+      // A published course page lists only completed resources, in display order.
+      const cloud = studentCourses.find((c) => c.title === 'Cloud Computing')!;
+      const done = await waitFor(
+        () => call(API, `/courses/${cloud.id}`, { token: auth.student.token }),
+        (r) => r.body.resources?.length === 4,
+        45,
+        1000,
+      );
+      expect(done.body.resources.map((a: Row) => a.title)).toEqual([
+        'Week 1 Lecture Slides: Cloud Service Models',
+        'AWS Architecture Guide',
+        'Week 2 Recording: Elastic Compute and Auto Scaling',
+        'Assignment Brief: Cloud Migration Proposal',
+      ]);
+      expect(done.body.resources[0].sectionLabel).toBe('Week 1');
+    }, 60_000);
+
+    it('teacher creates a draft course (MySQL row), invisible to students', async () => {
+      const r = await call(API, '/courses', {
+        token: auth.teacher.token,
+        json: { title: `ACCEPT ${RUN} draft course`, description: 'Draft for the lifecycle test', category: 'Acceptance' },
+      });
+      expect(r.status).toBe(201);
+      draftId = r.body.course.id;
+      const [row] = await rows('SELECT title, status, creator_id FROM courses WHERE id = ?', [draftId]);
+      expect(row).toMatchObject({ status: 'draft', creator_id: auth.teacher.sub });
+      expect((await call(API, `/courses/${draftId}`, { token: auth.student.token })).status).toBe(404);
+      expect((await call(API, '/courses', { token: auth.student.token })).body.courses.some((c: Row) => c.id === draftId)).toBe(false);
+      expect((await call(API, '/courses', { method: 'POST', token: auth.student.token, json: { title: 'x', category: 'y' } })).status).toBe(403);
+    });
+
+    it('a resource uploaded into the draft course is processed (S3 + MySQL) but stays hidden until the course is published', async () => {
+      const data = Buffer.from(`course resource ${RUN}`);
+      const up = await call(API, '/assets', {
+        token: auth.teacher.token,
+        form: fileForm({ courseId: draftId, title: `ACCEPT ${RUN} week 1`, type: 'document', sectionLabel: 'Week 1', description: 'Notes' },
+          { name: 'w1.txt', type: 'text/plain', data }),
+      });
+      expect(up.status, JSON.stringify(up.body)).toBe(202);
+      resourceId = up.body.assetId;
+      expect((await waitForJob(up.body.jobId)).body.state).toBe('completed');
+      const [asset] = await rows('SELECT course_id, section_label, description, display_order, s3_key FROM assets WHERE id = ?', [resourceId]);
+      expect(asset).toMatchObject({ course_id: draftId, section_label: 'Week 1', description: 'Notes', display_order: 0 });
+      const head = await s3.send(new HeadObjectCommand({ Bucket: names.bucket, Key: asset!.s3_key }));
+      expect(head.ContentLength).toBe(data.length);
+
+      // Completed, but the course is a draft: no presigned URL, not listed.
+      expect((await call(API, `/assets/${resourceId}`, { token: auth.student.token })).status).toBe(404);
+      expect((await call(API, '/assets', { token: auth.student.token })).body.assets.some((a: Row) => a.id === resourceId)).toBe(false);
+    }, 60_000);
+
+    it('publishing shows the course and resource; opening it updates course progress exactly', async () => {
+      const pub = await call(API, `/courses/${draftId}`, { method: 'PATCH', token: auth.teacher.token, json: { status: 'published' } });
+      expect(pub.status).toBe(200);
+      const before = await call(API, `/courses/${draftId}`, { token: auth.student.token });
+      expect(before.status).toBe(200);
+      expect(before.body.resources.map((a: Row) => a.id)).toEqual([resourceId]);
+      expect(before.body.progress).toEqual({ opened: 0, available: 1, coverage: 0 });
+
+      const open = await call(API, `/assets/${resourceId}`, { token: auth.student.token });
+      expect(open.status).toBe(200);
+      expect(open.body.downloadUrl).toMatch(/X-Amz-Signature=/);
+      const after = await call(API, `/courses/${draftId}`, { token: auth.student.token });
+      expect(after.body.progress).toEqual({ opened: 1, available: 1, coverage: 1 });
+      expect(after.body.resources[0].access.openCount).toBe(1);
+      const p = (await call(API, '/me/progress', { token: auth.student.token })).body;
+      expect(p.courses.find((c: Row) => c.courseId === draftId)).toMatchObject({ opened: 1, available: 1, coverage: 1 });
+    });
+
+    it('archiving hides the course and its resources from students but keeps rows and access history', async () => {
+      const arch = await call(API, `/courses/${draftId}`, { method: 'PATCH', token: auth.teacher.token, json: { status: 'archived' } });
+      expect(arch.status).toBe(200);
+      expect((await call(API, `/courses/${draftId}`, { token: auth.student.token })).status).toBe(404);
+      expect((await call(API, `/assets/${resourceId}`, { token: auth.student.token })).status).toBe(404);
+      const p = (await call(API, '/me/progress', { token: auth.student.token })).body;
+      expect(p.courses.some((c: Row) => c.courseId === draftId)).toBe(false);
+      const [access] = await rows('SELECT open_count FROM resource_access WHERE user_id = ? AND asset_id = ?', [auth.student.sub, resourceId]);
+      expect(access!.open_count).toBe(1);
+      const teacherView = await call(API, `/courses/${draftId}`, { token: auth.teacher.token });
+      expect(teacherView.body.course.status).toBe('archived');
+      expect(teacherView.body.resources).toHaveLength(1);
+
+      const noUpload = await call(API, '/assets', {
+        token: auth.teacher.token,
+        form: fileForm({ courseId: draftId, title: 'x', type: 'document' }, { name: 'x.txt', type: 'text/plain', data: Buffer.from('x') }),
+      });
+      expect(noUpload.status).toBe(409);
+      expect((await call(API, `/courses/${draftId}`, { method: 'PATCH', token: auth.teacher.token, json: { status: 'published' } })).status).toBe(409);
+      expect((await call(API, `/courses/${draftId}`, { method: 'PATCH', token: auth.teacher.token, json: { status: 'draft' } })).body.course.status).toBe('draft');
+    });
+
+    it('a cover image is stored in S3 under pictures/covers and served through a presigned link', async () => {
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      );
+      const form = new FormData();
+      form.append('cover', new Blob([png], { type: 'image/png' }), 'cover.png');
+      const r = await call(API, `/courses/${courseId}/cover`, { method: 'PUT', token: auth.teacher.token, form });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      const [row] = await rows('SELECT cover_key, cover_content_type FROM courses WHERE id = ?', [courseId]);
+      expect(row!.cover_key).toMatch(new RegExp(`^pictures/covers/${courseId}/`));
+      expect(row!.cover_content_type).toBe('image/png');
+      const img = await fetch(r.body.course.coverUrl);
+      expect(img.status).toBe(200);
+      expect(Buffer.from(await img.arrayBuffer()).equals(png)).toBe(true);
+      // Students see the same cover on the published course.
+      const s = await call(API, `/courses/${courseId}`, { token: auth.student.token });
+      expect(s.body.course.coverUrl).toMatch(/X-Amz-Signature=/);
     });
   });
 

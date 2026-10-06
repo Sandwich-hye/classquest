@@ -27,8 +27,8 @@ async function main() {
   if (!seed.ok) throw new Error(`Seed failed (HTTP ${seed.status}): ${body?.error?.message ?? 'unknown error'}`);
 
   console.log(body.message);
-  console.log(`Queued ${body.assets.length} new resource(s); skipped ${body.skipped.length} already present.`);
-  console.log('Processing runs asynchronously — watch Operations or the Library for status updates.');
+  console.log(`Courses: ${body.courses.created.length} created (${body.courses.total} sample courses). Queued ${body.assets.length} new resource(s); skipped ${body.skipped.length} already present.`);
+  console.log('Processing runs asynchronously — watch My Courses (course pages) or Operations for status updates.');
 }
 
 main().catch((e) => {

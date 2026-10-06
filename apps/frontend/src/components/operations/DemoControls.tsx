@@ -109,7 +109,7 @@ export function DemoControls({ threshold, onDone }: DemoControlsProps) {
         <Control
           icon="upload-cloud"
           title="Seed demo catalogue"
-          demonstrates="Publishes the sample catalogue through the normal path: S3 upload, MySQL record, SQS message, worker processing. Already-seeded items are skipped."
+          demonstrates="Creates the sample courses and publishes their resources through the normal path: S3 upload, MySQL record, SQS message, worker processing. Already-seeded courses and resources are skipped."
           actionLabel="Seed demo catalogue"
           variant="secondary"
           onRun={async () => {
@@ -118,6 +118,7 @@ export function DemoControls({ threshold, onDone }: DemoControlsProps) {
               <>
                 <strong>{r.message}</strong>
                 <span>
+                  {r.courses.created.length} new course{r.courses.created.length === 1 ? '' : 's'} ({r.courses.total} sample courses in total);{' '}
                   {r.assets.length} new resource{r.assets.length === 1 ? '' : 's'} queued for processing
                   {r.skipped.length > 0 && `; ${r.skipped.length} already present and skipped`}.
                 </span>

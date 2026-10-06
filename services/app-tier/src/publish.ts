@@ -21,7 +21,13 @@ const log = createLogger('app-tier');
 
 export interface PublishInput {
   ownerId: string;
+  /** Course the resource belongs to (the caller has already checked access). */
+  courseId: string;
   title: string;
+  description?: string;
+  sectionLabel?: string | null;
+  /** Omitted: appended after the course's last resource. */
+  displayOrder?: number;
   type: AssetType;
   body: Buffer;
   contentType: string;
@@ -44,7 +50,11 @@ export async function publishAsset(input: PublishInput): Promise<PublishResult> 
   // 2) Persist metadata + job (both start as `submitted`).
   const asset = await assetRepo.create({
     ownerId: input.ownerId,
+    courseId: input.courseId,
     title: input.title,
+    description: input.description,
+    sectionLabel: input.sectionLabel,
+    displayOrder: input.displayOrder,
     type: input.type,
     s3Key: key,
     s3Bucket: storage.bucketName,

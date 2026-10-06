@@ -4,6 +4,7 @@ import { api, type ApiError, type StudentProgress } from '../api';
 import { TYPE_LABEL, type AssetType } from '../lib/assets';
 import { useOpenResource } from '../lib/openResource';
 import { coveragePercent, formatRelative, percent } from '../lib/progress';
+import { percentLabel } from '../lib/courses';
 import { PageHeader } from '../components/shell/PageHeader';
 import { Badge, Button, Card, EmptyState, Icon, ProgressBar, StatCard } from '../components/ui';
 
@@ -14,8 +15,9 @@ const TYPES: Array<{ type: AssetType; label: string }> = [
 ];
 
 /**
- * My Progress: which completed library resources the student has opened
- * (GET /me/progress). Access only — not grades, mastery or completion.
+ * My Progress: which resources of published courses the student has opened
+ * (GET /me/progress) — overall, per course and per type. Access only — not
+ * grades, mastery or completion.
  */
 export function MyProgress() {
   const [progress, setProgress] = useState<StudentProgress | null>(null);
@@ -41,7 +43,7 @@ export function MyProgress() {
       <PageHeader
         eyebrow="Learning portal"
         title="My Progress"
-        description="The library resources you have opened in ClassQuest."
+        description="The course resources you have opened in ClassQuest."
       />
 
       <p className="cq-scope-note" role="note">
@@ -65,9 +67,9 @@ export function MyProgress() {
         <>
           <div className="cq-kpi-grid cq-ops-section">
             <StatCard label="Resources opened" icon="external" value={progress.opened} sub="Distinct resources" tone="primary" />
-            <StatCard label="Resources available" icon="library" value={progress.available} sub="Published in the library" tone="callout" />
+            <StatCard label="Resources available" icon="library" value={progress.available} sub="In published courses" tone="callout" />
             <StatCard
-              label="Library coverage"
+              label="Overall coverage"
               icon="progress"
               value={percent(progress.coverage)}
               unit="%"
@@ -82,6 +84,38 @@ export function MyProgress() {
               tone="warning"
             />
           </div>
+
+          <Card
+            className="cq-ops-section"
+            title="By course"
+            subtitle="Resources opened out of those available in each published course."
+            action={<Link className="cq-btn cq-btn--link" to="/courses">All courses</Link>}
+          >
+            {progress.courses.length === 0 ? (
+              <EmptyState icon="course" title="No published courses yet" description="Courses appear here once your teachers publish them." />
+            ) : (
+              <ul className="cq-course-progress-list">
+                {progress.courses.map((c) => (
+                  <li key={c.courseId} className="cq-course-progress-row">
+                    <div className="cq-course-progress-row__text">
+                      <Link to={`/courses/${c.courseId}`} className="cq-course-progress-row__title">{c.title}</Link>
+                      <span className="cq-small">
+                        {c.category}
+                        {c.lastOpenedAt ? ` · Last opened ${formatRelative(c.lastOpenedAt)}` : ' · Not started'}
+                      </span>
+                    </div>
+                    <span className="cq-course-progress-row__count">
+                      {c.opened} / {c.available} <span className="cq-small">resources opened</span>
+                    </span>
+                    <div className="cq-course-progress-row__bar">
+                      <ProgressBar value={c.coverage * 100} label={`${c.title}: resources opened`} />
+                    </div>
+                    <strong className="cq-course-progress-row__pct">{percentLabel(c.coverage)}</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
 
           <div className="cq-ops-columns cq-ops-section">
             <Card title="By resource type" subtitle="Resources opened out of those available.">
@@ -107,14 +141,14 @@ export function MyProgress() {
             <Card
               title="Recently opened"
               subtitle="Your most recent resources, newest first."
-              action={<Link className="cq-btn cq-btn--link" to="/library">Library</Link>}
+              action={<Link className="cq-btn cq-btn--link" to="/courses">Courses</Link>}
             >
               {progress.recent.length === 0 ? (
                 <EmptyState
                   icon="library"
                   title="Nothing opened yet"
-                  description="Resources you open from the Library will be listed here."
-                  action={<Link className="cq-btn cq-btn--primary" to="/library">Browse the Library</Link>}
+                  description="Resources you open from your courses will be listed here."
+                  action={<Link className="cq-btn cq-btn--primary" to="/courses">Browse courses</Link>}
                 />
               ) : (
                 <ul className="cq-recent">
@@ -126,7 +160,7 @@ export function MyProgress() {
                       <div className="cq-recent__text">
                         <span className="cq-recent__title">{r.asset.title}</span>
                         <span className="cq-small">
-                          {TYPE_LABEL[r.asset.type]} · Last opened {formatRelative(r.lastOpenedAt)} · Opened {r.openCount}{' '}
+                          {r.asset.courseTitle} · {TYPE_LABEL[r.asset.type]} · Last opened {formatRelative(r.lastOpenedAt)} · Opened {r.openCount}{' '}
                           {r.openCount === 1 ? 'time' : 'times'}
                         </span>
                         {errorId === r.asset.id && <span className="cq-resource__error" role="alert">Could not open — try again.</span>}

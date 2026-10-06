@@ -58,6 +58,10 @@ async function request<T>(
   return handle<T>(res, 'Authorization' in auth, opts.okStatuses);
 }
 
+function json(method: string, body: unknown): RequestInit {
+  return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+}
+
 export const api = {
   login(email: string, password: string) {
     return request<{ token: string; role: string; displayName: string }>(
@@ -82,7 +86,46 @@ export const api = {
   },
 
   uploadAsset(form: FormData) {
-    return request<{ assetId: string; jobId: string; status: string }>('/assets', { method: 'POST', body: form });
+    return request<{ assetId: string; jobId: string; status: string; courseId: string }>('/assets', { method: 'POST', body: form });
+  },
+
+  /** Teacher/admin: edit a resource's course-page details, or move it to another course. */
+  updateAsset(id: string, fields: Partial<Pick<Asset, 'title' | 'description' | 'sectionLabel' | 'displayOrder' | 'courseId'>>) {
+    return request<{ asset: Asset }>(`/assets/${id}`, json('PATCH', fields));
+  },
+
+  // --- courses ---
+  /** Teacher: own courses · admin: all courses (staff shape). */
+  listCourses() {
+    return request<{ courses: StaffCourse[] }>('/courses');
+  },
+  /** Student: published courses with the student's own progress. */
+  listStudentCourses() {
+    return request<{ courses: StudentCourse[] }>('/courses');
+  },
+  getCourse(id: string) {
+    return request<{ course: Course; resources: Asset[] }>(`/courses/${id}`);
+  },
+  getStudentCourse(id: string) {
+    return request<StudentCourseDetail>(`/courses/${id}`);
+  },
+  createCourse(fields: { title: string; description: string; category: string; status: 'draft' | 'published' }) {
+    return request<{ course: Course }>('/courses', json('POST', fields));
+  },
+  updateCourse(id: string, fields: Partial<Pick<Course, 'title' | 'description' | 'category' | 'status'>>) {
+    return request<{ course: Course }>(`/courses/${id}`, json('PATCH', fields));
+  },
+  uploadCover(id: string, file: File) {
+    const form = new FormData();
+    form.append('cover', file);
+    return request<{ course: Course }>(`/courses/${id}/cover`, { method: 'PUT', body: form });
+  },
+  deleteCover(id: string) {
+    return request<{ course: Course }>(`/courses/${id}/cover`, { method: 'DELETE' });
+  },
+  /** `assetIds` must list every resource of the course, in the new order. */
+  reorderCourse(id: string, assetIds: string[]) {
+    return request<{ resources: Asset[] }>(`/courses/${id}/order`, json('PUT', { assetIds }));
   },
 
   /** Student only: which completed resources this student has opened. */
@@ -148,10 +191,61 @@ export interface SessionUser {
   displayName: string;
 }
 
+export type CourseStatus = 'draft' | 'published' | 'archived';
+
+export interface Course {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  /** Time-limited S3 link to the cover image; null = placeholder cover. */
+  coverUrl: string | null;
+  creatorId: string;
+  creatorName: string;
+  status: CourseStatus;
+  isDemo: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** GET /courses as teacher/admin. */
+export interface StaffCourse extends Course {
+  resourceCount: number;
+  completedCount: number;
+}
+
+/** GET /courses as student: published courses with the student's access counts. */
+export interface StudentCourse extends Course {
+  available: number;
+  opened: number;
+  /** opened / available, 0–1. */
+  coverage: number;
+  lastOpenedAt: string | null;
+}
+
+export interface AccessRecord {
+  firstOpenedAt: string;
+  lastOpenedAt: string;
+  openCount: number;
+}
+
+/** GET /courses/:id as student: completed resources only. */
+export interface StudentCourseDetail {
+  course: Course;
+  resources: Array<Asset & { access: AccessRecord | null }>;
+  progress: { opened: number; available: number; coverage: number };
+}
+
 export interface Asset {
   id: string;
   ownerId: string;
+  courseId: string;
+  courseTitle: string;
+  courseStatus: CourseStatus;
   title: string;
+  description: string;
+  sectionLabel: string | null;
+  displayOrder: number;
   type: 'document' | 'book' | 'video';
   s3Key: string;
   sizeBytes: number;
@@ -175,6 +269,11 @@ export interface StudentProgress {
   coverage: number;
   lastOpenedAt: string | null;
   byType: Record<Asset['type'], TypeCounts>;
+  /** One row per published course. */
+  courses: Array<{
+    courseId: string; title: string; category: string;
+    opened: number; available: number; coverage: number; lastOpenedAt: string | null;
+  }>;
   recent: Array<{ asset: Asset; firstOpenedAt: string; lastOpenedAt: string; openCount: number }>;
 }
 
@@ -215,6 +314,7 @@ export interface HealthStatus {
 export interface DemoSeedResult {
   message: string;
   users: Array<{ email: string; role: string }>;
-  assets: Array<{ assetId: string; jobId: string; title: string }>;
+  courses: { created: string[]; total: number };
+  assets: Array<{ assetId: string; jobId: string; title: string; course: string }>;
   skipped: string[];
 }

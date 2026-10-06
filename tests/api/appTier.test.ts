@@ -122,6 +122,12 @@ describe.skipIf(!available)('App Tier API (live stack)', () => {
       ['GET', '/me/progress', 401, 'ok', 403, 403],
       ['POST', '/demo/induce-failure', 401, 403, 'ok', 'ok'],
       ['POST', '/demo/lifecycle-simulate', 401, 403, 'ok', 'ok'],
+      ['GET', '/courses', 401, 'ok', 'ok', 'ok'],
+      // No body: staff get a validation error (400), never 401/403; nothing is created.
+      ['POST', '/courses', 401, 403, 'ok', 'ok'],
+      ['PATCH', '/courses/00000000-0000-4000-8000-00000000ffff', 401, 403, 'ok', 'ok'],
+      ['PUT', '/courses/00000000-0000-4000-8000-00000000ffff/order', 401, 403, 'ok', 'ok'],
+      ['PATCH', '/assets/00000000-0000-4000-8000-00000000ffff', 401, 403, 'ok', 'ok'],
     ];
     for (const [method, path, ...expected] of matrix) {
       const got = [
@@ -173,6 +179,22 @@ describe.skipIf(!available)('App Tier API (live stack)', () => {
     expect(after.opened).toBeGreaterThanOrEqual(before.opened);
     expect(after.opened).toBeLessThanOrEqual(after.available);
     expect(after.byType).toHaveProperty('document');
+  });
+
+  it('students only see published courses; the seeded draft course is visible to its teacher only', async () => {
+    const asStudent = (await (await fetch(`${BASE}/courses`, { headers: { Authorization: `Bearer ${studentToken}` } })).json()).courses;
+    const asTeacher = (await (await fetch(`${BASE}/courses`, { headers: { Authorization: `Bearer ${teacherToken}` } })).json()).courses;
+    expect(asStudent.length).toBeGreaterThan(0);
+    expect(asStudent.every((c: { status: string }) => c.status === 'published')).toBe(true);
+    const draft = asTeacher.find((c: { title: string }) => c.title === 'Cybersecurity Essentials');
+    expect(draft?.status).toBe('draft');
+    expect(asStudent.some((c: { id: string }) => c.id === draft.id)).toBe(false);
+    expect((await fetch(`${BASE}/courses/${draft.id}`, { headers: { Authorization: `Bearer ${studentToken}` } })).status).toBe(404);
+    // Progress fields are access counts only.
+    for (const c of asStudent) {
+      expect(c.opened).toBeLessThanOrEqual(c.available);
+      expect(c).not.toHaveProperty('grade');
+    }
   });
 
   it('/me/progress is student-only', async () => {

@@ -10,6 +10,9 @@ import { Operations } from './pages/Operations';
 import { StudentHome } from './pages/StudentHome';
 import { MyProgress } from './pages/MyProgress';
 import { TeacherDashboard } from './pages/TeacherDashboard';
+import { Courses } from './pages/courses/Courses';
+import { CourseDetail } from './pages/courses/CourseDetail';
+import { CourseForm } from './pages/courses/CourseForm';
 
 /**
  * Routing. Each authenticated route is guarded by the roles declared in
@@ -59,6 +62,46 @@ export function App() {
           element={
             <RequireRole roles={ROUTES.dashboard.roles}>
               <TeacherDashboard />
+            </RequireRole>
+          }
+        />
+        <Route
+          path={ROUTES.courses.path}
+          element={
+            <RequireRole roles={ROUTES.courses.roles}>
+              <Courses />
+            </RequireRole>
+          }
+        />
+        <Route
+          path={ROUTES.courseNew.path}
+          element={
+            <RequireRole roles={ROUTES.courseNew.roles}>
+              <CourseForm />
+            </RequireRole>
+          }
+        />
+        <Route
+          path={ROUTES.courseDetail.path}
+          element={
+            <RequireRole roles={ROUTES.courseDetail.roles}>
+              <CourseDetail />
+            </RequireRole>
+          }
+        />
+        <Route
+          path={ROUTES.courseEdit.path}
+          element={
+            <RequireRole roles={ROUTES.courseEdit.roles}>
+              <CourseForm key="edit" />
+            </RequireRole>
+          }
+        />
+        <Route
+          path={ROUTES.courseAddResource.path}
+          element={
+            <RequireRole roles={ROUTES.courseAddResource.roles}>
+              <Publish key="course-resource" />
             </RequireRole>
           }
         />

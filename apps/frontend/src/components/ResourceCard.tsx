@@ -39,6 +39,10 @@ export function ResourceCard({ asset, showPipeline, onOpened }: ResourceCardProp
         </div>
 
         <h3 className="cq-resource__title">{asset.title}</h3>
+        <p className="cq-resource__course">
+          <Icon name="course" size={14} /> {asset.courseTitle}
+          {asset.sectionLabel && <> · {asset.sectionLabel}</>}
+        </p>
 
         <p className="cq-resource__meta">
           <span>Added {formatDate(asset.createdAt)}</span>

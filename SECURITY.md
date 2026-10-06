@@ -18,9 +18,14 @@ rather than something this repository runs.
 
 | Endpoint | Student | Teacher | Admin | Notes |
 |----------|:-------:|:-------:|:-----:|-------|
-| `GET /assets` | completed only | all | all | |
-| `GET /assets/:id` (presigned URL) | completed only, else 404 | ✓ | ✓ | Student opens are recorded |
-| `POST /assets` (upload) | — | ✓ | ✓ | |
+| `GET /assets` | completed + published course only | all | all | |
+| `GET /assets/:id` (presigned URL) | completed + published course only, else 404 | ✓ | ✓ | Student opens are recorded |
+| `POST /assets` (upload) | — | own courses | any course | `courseId` required; archived courses refuse uploads (409) |
+| `PATCH /assets/:id` | — | own courses | any course | Moving requires managing the target course too |
+| `GET /courses` | published courses + own progress | own courses | all courses | |
+| `POST /courses` | — | ✓ | ✓ | Creator is always the caller |
+| `GET /courses/:id` | published only, else 404 | own courses (else 403) | ✓ | Students get completed resources only |
+| `PATCH /courses/:id`, `PUT /courses/:id/order`, `PUT`/`DELETE /courses/:id/cover` | — | own courses (else 403) | ✓ | Lifecycle transitions validated (409) |
 | `GET /jobs/:id`, `GET /assets/:id/job` | — | ✓ | ✓ | |
 | `GET /dashboard/metrics` | — | ✓ | ✓ | |
 | `GET /me/progress` | own data | — | — | |
@@ -50,21 +55,27 @@ security boundary.
 - **Known gaps:** LocalStack Community does not enforce IAM, so these policies
   are not exercised locally. On real AWS the app role would also need
   `sns:CreateTopic`/`sns:Publish`, `cloudwatch:GetMetricStatistics`/
-  `DescribeAlarms`, `sqs:ChangeMessageVisibility` and `sns:ListTopics` for the
-  current code; the worker would use the app role or its own role.
+  `DescribeAlarms`, `sqs:ChangeMessageVisibility`, `sns:ListTopics` and
+  `s3:DeleteObject` (replacing or removing a course cover) for the current
+  code; the worker would use the app role or its own role.
 
 ## Input validation and data access
 
-- zod schemas validate request bodies; uploads are checked against a per-type
-  MIME allow-list and `MAX_UPLOAD_BYTES` (50 MB). The MIME type is the one the
-  client sends; file contents are not inspected.
+- zod schemas validate request bodies (course bodies are strict: unknown
+  fields such as `creatorId` are rejected); uploads are checked against a
+  per-type MIME allow-list and `MAX_UPLOAD_BYTES` (50 MB). Course covers must
+  be PNG/JPEG/WebP and at most 2 MB. The MIME type is the one the client
+  sends; file contents are not inspected.
 - All SQL is parameterised (`packages/shared/src/db/repositories.ts`).
 - Errors return `{ code, message, requestId }`; stack traces stay in logs.
 
 ## Data protection
 
 - S3 Block Public Access, versioning and SSE (AES256) are set in Terraform.
-  Files are retrieved only via presigned URLs valid for 5 minutes.
+  Files are retrieved only via presigned URLs valid for 5 minutes (course
+  cover images: 15 minutes). The Web Tier CSP `img-src` allows the
+  browser-facing S3 endpoint (`S3_PUBLIC_ENDPOINT`, or the regional S3 host on
+  AWS) so cover images can be displayed.
 - TLS, SSE-KMS and Secrets Manager are _production design_ (§6.8, §6.10,
   §6.12); the local stack runs over HTTP with secrets in `.env`.
 

@@ -17,6 +17,7 @@ const WEB = urls.WEB_TIER;
 const available = await stackAvailable('E2E tests (tests/e2e)', ['webTier', 'appTier', 'localstack']);
 let token = '';
 let studentToken = '';
+let courseId = '';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loosely typed JSON from the live API
 type Json = Record<string, any>;
@@ -86,10 +87,20 @@ describe.skipIf(!available)('E2E: primary workflow via the Web Tier (live stack)
     const seed = await api('/demo/seed', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     expect(seed.status, 'demo seed').toBe(200);
     studentToken = await loginAs('student@classquest.example', 'DemoStudent123!');
+    const course = await api('/courses', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: `E2E course ${Date.now().toString(36)}`, category: 'E2E', status: 'published' }),
+    });
+    expect(course.status, 'create course').toBe(201);
+    courseId = (await course.json()).course.id;
   }, 60_000);
 
   it('Web Tier serves the SPA on deep links, branding assets, security headers and API 404s', async () => {
-    for (const path of ['/', '/login', '/home', '/library', '/progress', '/dashboard', '/publish', '/operations']) {
+    for (const path of [
+      '/', '/login', '/home', '/library', '/progress', '/dashboard', '/publish', '/operations',
+      '/courses', '/courses/new', `/courses/${courseId}`, `/courses/${courseId}/edit`, `/courses/${courseId}/resources/new`,
+    ]) {
       const r = await fetch(`${WEB}${path}`);
       expect(r.status, path).toBe(200);
       expect(r.headers.get('content-type'), path).toContain('text/html');
@@ -102,6 +113,8 @@ describe.skipIf(!available)('E2E: primary workflow via the Web Tier (live stack)
     }
     const home = await fetch(`${WEB}/`);
     expect(home.headers.get('content-security-policy')).toContain("default-src 'self'");
+    // Course covers load from time-limited S3 links, so img-src allows the S3 endpoint.
+    expect(home.headers.get('content-security-policy')).toMatch(/img-src[^;]*(localhost:4566|amazonaws\.com)/);
     const missing = await api('/does-not-exist');
     expect(missing.status).toBe(404);
     expect((await missing.json()).error.code).toBe('NOT_FOUND');
@@ -110,6 +123,7 @@ describe.skipIf(!available)('E2E: primary workflow via the Web Tier (live stack)
   it('uploads an asset and processes it to completion, then retrieves it', async () => {
 
     const form = new FormData();
+    form.append('courseId', courseId);
     form.append('title', 'E2E — sample document');
     form.append('type', 'document');
     form.append('file', new Blob([Buffer.from('e2e content')], { type: 'text/plain' }), 'e2e.txt');
@@ -135,6 +149,11 @@ describe.skipIf(!available)('E2E: primary workflow via the Web Tier (live stack)
     const file = await fetch(body.downloadUrl);
     expect(file.status).toBe(200);
     expect(await file.text()).toBe('e2e content');
+
+    // The completed resource appears inside its (published) course for the student.
+    const course = await (await api(`/courses/${courseId}`, { headers: { Authorization: `Bearer ${studentToken}` } })).json();
+    expect(course.resources.map((x: Json) => x.id)).toEqual([assetId]);
+    expect(course.progress).toMatchObject({ available: 1 });
   }, 90_000);
 
   it('induced failure: 3 attempts -> failed, then SQS redrive moves the message to the DLQ', async () => {

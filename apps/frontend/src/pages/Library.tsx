@@ -19,9 +19,9 @@ const SORT_OPTIONS = [
 ];
 
 /**
- * Library (all roles). The list comes from GET /assets (type filter applied
- * server-side); the backend already limits students to completed assets.
- * Search and sort run client-side over that list.
+ * Library (teachers and admins): every resource across all courses, with its
+ * pipeline state. Students reach resources through Courses instead (/library
+ * redirects them there). Search and sort run client-side over GET /assets.
  */
 export function Library() {
   const { session } = useAuth();
@@ -68,7 +68,7 @@ export function Library() {
         title="Learning Library"
         description={
           isStaff
-            ? 'Every resource in the library, including items still being processed. Students only see completed resources.'
+            ? 'Every resource across all courses, including items still being processed. Students only see completed resources of published courses.'
             : 'Documents, books and videos shared by your teachers. Resources open through secure, time-limited links.'
         }
         actions={
@@ -126,7 +126,7 @@ export function Library() {
               title={type === 'all' ? 'No resources yet' : `No ${TYPE_OPTIONS.find((o) => o.value === type)?.label.toLowerCase()} yet`}
               description={
                 isStaff
-                  ? 'Publish a resource, or seed the demo catalogue from Operations.'
+                  ? 'Add a resource to a course, or seed the demo courses from Operations.'
                   : 'Resources appear here once your teachers publish them.'
               }
             />
