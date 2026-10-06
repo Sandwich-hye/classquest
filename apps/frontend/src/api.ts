@@ -138,6 +138,9 @@ export interface JobStatus {
   state: 'submitted' | 'queued' | 'processing' | 'completed' | 'failed';
   attempts: number;
   error: string | null;
+  submittedAt?: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
 }
 
 export interface DashboardMetrics {

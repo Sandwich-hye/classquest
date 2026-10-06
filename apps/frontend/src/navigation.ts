@@ -7,7 +7,8 @@ export type Role = 'student' | 'teacher' | 'admin';
 
 export type IconName =
   | 'home' | 'library' | 'progress' | 'dashboard' | 'publish' | 'operations'
-  | 'bell' | 'search' | 'logout' | 'chevron-down' | 'inbox' | 'lock';
+  | 'bell' | 'search' | 'logout' | 'chevron-down' | 'inbox' | 'lock'
+  | 'document' | 'book' | 'video' | 'external' | 'upload-cloud' | 'check' | 'x' | 'alert' | 'refresh';
 
 export interface RouteDef {
   path: string;
