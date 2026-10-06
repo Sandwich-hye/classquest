@@ -392,7 +392,10 @@ describe.skipIf(!available)('Live stack integration (App Tier + LocalStack + MyS
     it('the alarm state shown by the API is exactly what CloudWatch reports', async () => {
       const metrics = await call(API, '/dashboard/metrics', { token: auth.teacher.token });
       const alarms = await cloudwatch.send(new DescribeAlarmsCommand({ AlarmNames: [names.alarm] }));
-      expect(metrics.body.alerting.http400AlarmState).toBe(alarms.MetricAlarms?.[0]?.StateValue ?? 'UNKNOWN');
+      // The alarm must exist and the App Tier must have read it (UNKNOWN means its CloudWatch call failed).
+      expect(alarms.MetricAlarms).toHaveLength(1);
+      expect(['OK', 'ALARM', 'INSUFFICIENT_DATA']).toContain(metrics.body.alerting.http400AlarmState);
+      expect(metrics.body.alerting.http400AlarmState).toBe(alarms.MetricAlarms![0].StateValue);
       expect(metrics.body.alerting.threshold).toBe(50);
       expect(metrics.body.alerting.periodSeconds).toBe(60);
     });

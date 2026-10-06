@@ -74,7 +74,7 @@ curl.exe -s http://localhost:4000/health
 
 - [ ] Tables: `assets`, `jobs`, `request_metrics`, `resource_access`, `users`.
 - [ ] Three demo users: admin, teacher, student.
-- [ ] Health returns `"status":"healthy"` (or `degraded-observability` if LocalStack's CloudWatch/SNS is slow to respond — core services must be `true`).
+- [ ] Health returns `"status":"healthy"` with all five dependencies `true`. `degraded-observability` means the App Tier could not reach CloudWatch or SNS — check `docker compose logs localstack`. (The CloudWatch client uses the Query protocol, the only one LocalStack 3.5 accepts; see `packages/shared/src/cloud/clients.ts`.)
 
 ## 5. Sign in as Student (empty library)
 

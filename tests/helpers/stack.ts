@@ -9,6 +9,7 @@ import { SQSClient, GetQueueUrlCommand } from '@aws-sdk/client-sqs';
 import { SNSClient } from '@aws-sdk/client-sns';
 import { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
 import { CloudWatchLogsClient } from '@aws-sdk/client-cloudwatch-logs';
+import { CLOUDWATCH_PROTOCOL } from '../../packages/shared/src/cloud/clients.js';
 import { mysqlConfig, urls } from './infra.js';
 
 export const names = {
@@ -29,7 +30,7 @@ const awsConfig = {
 export const s3 = new S3Client(awsConfig);
 export const sqs = new SQSClient(awsConfig);
 export const sns = new SNSClient(awsConfig);
-export const cloudwatch = new CloudWatchClient(awsConfig);
+export const cloudwatch = new CloudWatchClient({ ...awsConfig, protocol: CLOUDWATCH_PROTOCOL });
 export const logs = new CloudWatchLogsClient(awsConfig);
 
 export async function queueUrl(name: string): Promise<string> {
