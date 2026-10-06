@@ -1,6 +1,8 @@
 /**
  * API tests against the running App Tier (report §3.4). Exercise auth, RBAC
  * and validation error shapes. Skip cleanly if the App Tier is not running.
+ * Demo users are created at App Tier startup (DEMO_MODE); seeding the catalog
+ * requires a teacher/admin token.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { appTierUp, urls } from '../helpers/infra.js';
@@ -8,6 +10,8 @@ import { appTierUp, urls } from '../helpers/infra.js';
 const BASE = urls.APP_TIER;
 let up = false;
 let seeded = false;
+let teacherToken = '';
+let studentToken = '';
 
 async function post(path: string, body?: unknown, token?: string) {
   return fetch(`${BASE}${path}`, {
@@ -20,11 +24,20 @@ async function post(path: string, body?: unknown, token?: string) {
   });
 }
 
+async function login(email: string, password: string): Promise<string> {
+  const r = await post('/auth/login', { email, password });
+  return r.ok ? (await r.json()).token : '';
+}
+
 beforeAll(async () => {
   up = await appTierUp();
   if (up) {
-    const r = await post('/demo/seed');
-    seeded = r.ok;
+    teacherToken = await login('teacher@classquest.example', 'DemoTeacher123!');
+    studentToken = await login('student@classquest.example', 'DemoStudent123!');
+    if (teacherToken) {
+      const r = await post('/demo/seed', undefined, teacherToken);
+      seeded = r.ok;
+    }
   }
 });
 
@@ -43,8 +56,8 @@ describe('App Tier API', () => {
     expect(r.status).toBe(401);
   });
 
-  it('logs in a seeded teacher and returns a token', async () => {
-    if (!up || !seeded) return expect(true).toBe(true);
+  it('logs in the demo teacher (created at startup) and returns a token', async () => {
+    if (!up) return expect(true).toBe(true);
     const r = await post('/auth/login', {
       email: 'teacher@classquest.example',
       password: 'DemoTeacher123!',
@@ -62,16 +75,34 @@ describe('App Tier API', () => {
   });
 
   it('enforces RBAC: a student cannot read ops metrics (403)', async () => {
-    if (!up || !seeded) return expect(true).toBe(true);
-    const login = await post('/auth/login', {
-      email: 'student@classquest.example',
-      password: 'DemoStudent123!',
-    });
-    const { token } = await login.json();
+    if (!up || !studentToken) return expect(true).toBe(true);
     const r = await fetch(`${BASE}/dashboard/metrics`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${studentToken}` },
     });
     expect(r.status).toBe(403);
+  });
+
+  it('students only see completed assets and cannot read jobs', async () => {
+    if (!up || !studentToken || !seeded) return expect(true).toBe(true);
+    const list = await fetch(`${BASE}/assets`, { headers: { Authorization: `Bearer ${studentToken}` } });
+    const { assets } = await list.json();
+    expect(assets.every((a: { status: string }) => a.status === 'completed')).toBe(true);
+    const job = await fetch(`${BASE}/jobs/any-id`, { headers: { Authorization: `Bearer ${studentToken}` } });
+    expect(job.status).toBe(403);
+  });
+
+  it('demo management endpoints require a teacher/admin token', async () => {
+    if (!up) return expect(true).toBe(true);
+    expect((await post('/demo/seed')).status).toBe(401);
+    if (studentToken) expect((await post('/demo/induce-failure', undefined, studentToken)).status).toBe(403);
+  });
+
+  it('demo seed does not return credentials', async () => {
+    if (!up || !teacherToken) return expect(true).toBe(true);
+    const r = await post('/demo/seed', undefined, teacherToken);
+    const body = await r.json();
+    expect(body).not.toHaveProperty('credentials');
+    expect(JSON.stringify(body)).not.toMatch(/password/i);
   });
 
   it('/demo/bad-request always returns 400 (HTTP-400 driver)', async () => {

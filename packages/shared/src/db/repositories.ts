@@ -6,6 +6,7 @@ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { randomUUID } from 'node:crypto';
 import { getPool } from './pool.js';
 import type { Asset, AssetType, Job, JobState, StorageClass, User, UserRole } from '../domain/types.js';
+import { CLAIMABLE_STATES, sourcesFor } from '../domain/jobStateMachine.js';
 
 // ---------- mapping helpers ----------
 function mapUser(r: RowDataPacket): User {
@@ -68,21 +69,30 @@ export const userRepo = {
     return user;
   },
 
-  async upsert(input: {
+  /**
+   * Insert the user only if the email is not already registered. Existing
+   * accounts are never modified (demo seeding must not reset passwords/roles).
+   * Returns true when a new row was created.
+   */
+  async createIfAbsent(input: {
     email: string;
     passwordHash: string;
     role: UserRole;
     displayName: string;
-  }): Promise<void> {
-    const id = randomUUID();
+  }): Promise<boolean> {
+    const [existing] = await getPool().query<RowDataPacket[]>(
+      'SELECT id FROM users WHERE email = ?',
+      [input.email],
+    );
+    if (existing.length > 0) return false;
+    // ON DUPLICATE KEY no-op keeps this safe if two instances race on startup.
     await getPool().query(
       `INSERT INTO users (id, email, password_hash, role, display_name)
        VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash),
-                               role = VALUES(role),
-                               display_name = VALUES(display_name)`,
-      [id, input.email, input.passwordHash, input.role, input.displayName],
+       ON DUPLICATE KEY UPDATE email = email`,
+      [randomUUID(), input.email, input.passwordHash, input.role, input.displayName],
     );
+    return true;
   },
 
   async findById(id: string): Promise<User | null> {
@@ -138,16 +148,15 @@ export const assetRepo = {
     return rows[0] ? mapAsset(rows[0]) : null;
   },
 
-  async list(filter?: { type?: AssetType }): Promise<Asset[]> {
-    if (filter?.type) {
-      const [rows] = await getPool().query<RowDataPacket[]>(
-        'SELECT * FROM assets WHERE type = ? ORDER BY created_at DESC LIMIT 200',
-        [filter.type],
-      );
-      return rows.map(mapAsset);
-    }
+  async list(filter?: { type?: AssetType; status?: JobState }): Promise<Asset[]> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.type) { where.push('type = ?'); params.push(filter.type); }
+    if (filter?.status) { where.push('status = ?'); params.push(filter.status); }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await getPool().query<RowDataPacket[]>(
-      'SELECT * FROM assets ORDER BY created_at DESC LIMIT 200',
+      `SELECT * FROM assets ${clause} ORDER BY created_at DESC LIMIT 200`,
+      params,
     );
     return rows.map(mapAsset);
   },
@@ -208,19 +217,47 @@ export const jobRepo = {
     return rows[0] ? mapJob(rows[0]) : null;
   },
 
-  async setState(
+  /**
+   * Conditional state change: applied only if the job is currently in a state
+   * the state machine allows to move to `to` (or in `opts.from`, when given).
+   * Returns false when the row was not in an allowed state — e.g. a duplicate
+   * SQS delivery finding the job already completed — so callers never
+   * overwrite a newer state with an older one.
+   */
+  async transition(
     id: string,
-    state: JobState,
-    opts?: { incrementAttempts?: boolean; error?: string | null; markStarted?: boolean; markFinished?: boolean },
-  ): Promise<void> {
+    to: JobState,
+    opts?: {
+      from?: readonly JobState[];
+      incrementAttempts?: boolean;
+      error?: string | null;
+      markStarted?: boolean;
+      markFinished?: boolean;
+    },
+  ): Promise<boolean> {
+    const from = opts?.from ?? sourcesFor(to);
+    if (from.length === 0) return false;
     const sets: string[] = ['state = ?'];
-    const params: unknown[] = [state];
+    const params: unknown[] = [to];
     if (opts?.incrementAttempts) sets.push('attempts = attempts + 1');
     if (opts?.error !== undefined) { sets.push('last_error = ?'); params.push(opts.error); }
     if (opts?.markStarted) sets.push('started_at = CURRENT_TIMESTAMP');
     if (opts?.markFinished) sets.push('finished_at = CURRENT_TIMESTAMP');
-    params.push(id);
-    await getPool().query(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`, params);
+    params.push(id, [...from]);
+    const [res] = await getPool().query<ResultSetHeader>(
+      `UPDATE jobs SET ${sets.join(', ')} WHERE id = ? AND state IN (?)`,
+      params,
+    );
+    return res.affectedRows === 1;
+  },
+
+  /** Worker claim: queued (or crashed-mid-attempt processing) -> processing. */
+  claim(id: string): Promise<boolean> {
+    return this.transition(id, 'processing', {
+      from: CLAIMABLE_STATES,
+      incrementAttempts: true,
+      markStarted: true,
+    });
   },
 
   async activeCount(): Promise<number> {

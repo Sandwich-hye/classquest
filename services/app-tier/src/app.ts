@@ -2,7 +2,7 @@
 import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import { requireAuth } from '@classquest/shared';
+import { requireAuth, loadConfig } from '@classquest/shared';
 import { requestContext, recordMetrics, notFound, errorHandler } from './middleware.js';
 import { authRouter } from './routes/auth.js';
 import { assetsRouter } from './routes/assets.js';
@@ -33,8 +33,11 @@ export function createApp(): Express {
   app.use('/jobs', jobsRouter);
   app.use('/dashboard', dashboardRouter);
 
-  // Demo mode (brief §18).
-  app.use('/demo', demoRouter);
+  // Demo mode (brief §18): only mounted when DEMO_MODE is enabled; otherwise
+  // /demo/* falls through to 404.
+  if (loadConfig().demoMode) {
+    app.use('/demo', demoRouter);
+  }
 
   app.use(notFound);
   app.use(errorHandler);

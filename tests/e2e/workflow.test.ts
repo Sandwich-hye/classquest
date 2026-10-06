@@ -2,12 +2,14 @@
  * End-to-end test of the primary research workflow (report §3.7; AC-2/3/4).
  * Runs through the Web Tier (single public entry) against the full stack:
  *   login -> upload -> queue -> worker -> completed -> retrieve (presigned)
- *   plus induced failure -> DLQ, and the HTTP-400 burst -> alarm.
+ *   plus induced failure -> retries -> failed -> native SQS redrive to the DLQ,
+ *   and the HTTP-400 burst -> alarm.
  *
  * Requires `npm run stack:up`. Skips cleanly when the stack is down.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { webTierUp, appTierUp, urls } from '../helpers/infra.js';
+import { SQSClient, GetQueueUrlCommand, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk/client-sqs';
+import { webTierUp, appTierUp, localstackUp, urls } from '../helpers/infra.js';
 
 const WEB = urls.WEB_TIER;
 let up = false;
@@ -29,16 +31,43 @@ async function poll(path: string, token: string, pred: (b: any) => boolean, trie
   return null;
 }
 
+/** Look for a message about `jobId` on the DLQ (native redrive target). */
+async function findInDlq(jobId: string, tries = 30, delayMs = 2000): Promise<boolean> {
+  const sqs = new SQSClient({
+    region: process.env.AWS_REGION ?? 'ap-southeast-2',
+    endpoint: urls.LOCALSTACK,
+    credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+  });
+  const { QueueUrl } = await sqs.send(
+    new GetQueueUrlCommand({ QueueName: process.env.SQS_DLQ_NAME ?? 'classquest-asset-processing-dlq' }),
+  );
+  for (let i = 0; i < tries; i++) {
+    // VisibilityTimeout 0 so unrelated DLQ messages are not hidden from others.
+    const out = await sqs.send(
+      new ReceiveMessageCommand({ QueueUrl, MaxNumberOfMessages: 10, WaitTimeSeconds: 1, VisibilityTimeout: 0 }),
+    );
+    for (const m of out.Messages ?? []) {
+      if (m.Body?.includes(jobId)) {
+        await sqs.send(new DeleteMessageCommand({ QueueUrl, ReceiptHandle: m.ReceiptHandle! }));
+        return true;
+      }
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return false;
+}
+
 beforeAll(async () => {
   up = (await webTierUp()) && (await appTierUp());
   if (up) {
-    await api('/demo/seed', { method: 'POST' });
+    // Demo users exist from App Tier startup (DEMO_MODE); seeding needs a token.
     const login = await api('/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'teacher@classquest.example', password: 'DemoTeacher123!' }),
     });
     if (login.ok) token = (await login.json()).token;
+    if (token) await api('/demo/seed', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
   }
 }, 60_000);
 
@@ -71,14 +100,25 @@ describe('E2E: primary workflow via the Web Tier', () => {
     expect(body.asset.status).toBe('completed');
   }, 90_000);
 
-  it('induced failure ends in a failed state (retry -> DLQ)', async () => {
+  it('induced failure: 3 attempts -> failed, then SQS redrive moves the message to the DLQ', async () => {
     if (!up || !token) return expect(true).toBe(true);
-    const r = await api('/demo/induce-failure', { method: 'POST' });
+    const r = await api('/demo/induce-failure', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
     expect(r.status).toBe(202);
     const { jobId } = await r.json();
+
+    // The worker retries up to maxReceiveCount (3) and marks the job failed
+    // on the final attempt WITHOUT deleting the message...
     const job = await poll(`/jobs/${jobId}`, token, (b) => b.state === 'failed', 40, 2000);
     expect(job?.state).toBe('failed');
-  }, 120_000);
+    expect(job?.attempts).toBe(3);
+
+    // ...so on the next receive SQS's native redrive policy moves it to the DLQ.
+    if (!(await localstackUp())) return;
+    expect(await findInDlq(jobId)).toBe(true);
+  }, 180_000);
 
   it('HTTP-400 burst exceeds the >50/min threshold (report 2.2.8)', async () => {
     if (!up || !token) return expect(true).toBe(true);

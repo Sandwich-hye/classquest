@@ -72,15 +72,15 @@ export const api = {
 
   // --- demo mode ---
   async demoSeed() {
-    const res = await fetch(`${BASE}/demo/seed`, { method: 'POST' });
+    const res = await fetch(`${BASE}/demo/seed`, { method: 'POST', headers: { ...authHeader() } });
     return handle<DemoSeedResult>(res);
   },
   async demoInduceFailure() {
-    const res = await fetch(`${BASE}/demo/induce-failure`, { method: 'POST' });
+    const res = await fetch(`${BASE}/demo/induce-failure`, { method: 'POST', headers: { ...authHeader() } });
     return handle<{ assetId: string; jobId: string; maxAttempts: number }>(res);
   },
   async demoLifecycleSimulate() {
-    const res = await fetch(`${BASE}/demo/lifecycle-simulate`, { method: 'POST' });
+    const res = await fetch(`${BASE}/demo/lifecycle-simulate`, { method: 'POST', headers: { ...authHeader() } });
     return handle<{ transitionedCount: number; transitioned: string[] }>(res);
   },
   /** Fire N intentional 400s through the edge to trip the HTTP-400 alarm. */
@@ -139,6 +139,7 @@ export interface HealthStatus {
 
 export interface DemoSeedResult {
   message: string;
+  users: Array<{ email: string; role: string }>;
   assets: Array<{ assetId: string; jobId: string; title: string }>;
-  credentials: Array<{ email: string; password: string; role: string }>;
+  skipped: string[];
 }

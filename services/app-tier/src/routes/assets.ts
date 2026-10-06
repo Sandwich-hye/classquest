@@ -2,8 +2,10 @@
  * Asset routes — the primary end-to-end workflow (report 3.7, FR-2/3/4/5/7).
  *
  *   POST /assets   (teacher)  -> S3 putObject + MySQL insert + SQS enqueue
- *   GET  /assets              -> list published assets
+ *   GET  /assets              -> list assets (students: completed only)
  *   GET  /assets/:id          -> metadata + presigned download URL
+ *                                (students: completed only)
+ *   GET  /assets/:id/job      -> processing status (teacher/admin)
  */
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import multer from 'multer';
@@ -12,16 +14,22 @@ import {
   assetTypeSchema,
   isContentTypeAllowed,
   assetRepo,
-  jobRepo,
   requireAuth,
   requireRole,
+  type Asset,
   type AssetType,
-  type ProcessingMessage,
+  type JwtPayload,
 } from '@classquest/shared';
 import { ApiError } from '../middleware.js';
-import { storage, queue, metrics, config } from '../services.js';
+import { storage, metrics, config } from '../services.js';
+import { publishAsset } from '../publish.js';
 
 export const assetsRouter = Router();
+
+/** Students may only see published (processing completed) assets. */
+function visibleTo(user: JwtPayload | undefined, asset: Asset): boolean {
+  return user?.role !== 'student' || asset.status === 'completed';
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -66,38 +74,18 @@ assetsRouter.post(
         );
       }
 
-      // 1) Store the binary in S3 (report 5.4.2).
-      const key = storage.buildKey(type as AssetType, file.originalname);
-      await storage.putObject(key, file.buffer, file.mimetype);
-
-      // 2) Persist metadata in MySQL (status=submitted).
-      const asset = await assetRepo.create({
+      const { asset, jobId } = await publishAsset({
         ownerId: req.user!.sub,
         title,
         type: type as AssetType,
-        s3Key: key,
-        s3Bucket: storage.bucketName,
-        sizeBytes: file.size,
+        body: file.buffer,
         contentType: file.mimetype,
+        originalName: file.originalname,
         isDemo,
       });
-
-      // 3) Create a job and enqueue it for async processing (report 3.7).
-      const job = await jobRepo.create(asset.id);
-      const message: ProcessingMessage = {
-        jobId: job.id,
-        assetId: asset.id,
-        s3Bucket: asset.s3Bucket,
-        s3Key: asset.s3Key,
-        type: asset.type,
-        induceFailure: req.query.induceFailure === 'true',
-      };
-      await queue.enqueue(message);
-      await assetRepo.setStatus(asset.id, 'queued');
-      await jobRepo.setState(job.id, 'queued');
       void metrics.incrementCounter('AssetsSubmitted');
 
-      res.status(202).json({ assetId: asset.id, jobId: job.id, status: 'queued' });
+      res.status(202).json({ assetId: asset.id, jobId, status: asset.status });
     } catch (err) {
       next(err);
     }
@@ -108,12 +96,13 @@ assetsRouter.post(
 assetsRouter.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const typeParam = req.query.type;
-    let filter: { type?: AssetType } | undefined;
+    const filter: { type?: AssetType; status?: 'completed' } = {};
     if (typeof typeParam === 'string') {
       const t = assetTypeSchema.safeParse(typeParam);
       if (!t.success) throw new ApiError(400, 'VALIDATION_ERROR', 'Invalid type filter');
-      filter = { type: t.data };
+      filter.type = t.data;
     }
+    if (req.user?.role === 'student') filter.status = 'completed';
     const assets = await assetRepo.list(filter);
     res.json({ assets });
   } catch (err) {
@@ -125,7 +114,9 @@ assetsRouter.get('/', requireAuth, async (req: Request, res: Response, next: Nex
 assetsRouter.get('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const asset = await assetRepo.findById(req.params.id);
-    if (!asset) throw new ApiError(404, 'NOT_FOUND', 'Asset not found');
+    // Unpublished assets are reported as not found to students (no presigned
+    // URL, and no confirmation that the asset exists).
+    if (!asset || !visibleTo(req.user, asset)) throw new ApiError(404, 'NOT_FOUND', 'Asset not found');
     // Report the live S3 tier (STANDARD vs GLACIER) for the UI (report 5.4.4).
     let currentTier = asset.storageClass;
     try {
@@ -141,7 +132,7 @@ assetsRouter.get('/:id', requireAuth, async (req: Request, res: Response, next: 
 });
 
 /** GET /assets/:id/job — current job state for this asset's processing. */
-assetsRouter.get('/:id/job', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+assetsRouter.get('/:id/job', requireAuth, requireRole('teacher', 'admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const asset = await assetRepo.findById(req.params.id);
     if (!asset) throw new ApiError(404, 'NOT_FOUND', 'Asset not found');
