@@ -12,6 +12,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const DB = process.env.TEST_MYSQL_DATABASE;
 const enabled = !!DB && DB !== 'classquest';
+if (!enabled) {
+  console.warn('[SKIPPED] Database tests (tests/integration/progressDb): opt-in — set TEST_MYSQL_DATABASE to a disposable database to run.');
+}
 if (enabled) {
   process.env.MYSQL_HOST = process.env.TEST_MYSQL_HOST ?? '127.0.0.1';
   process.env.MYSQL_PORT = process.env.TEST_MYSQL_PORT ?? '3306';

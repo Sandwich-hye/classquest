@@ -22,7 +22,7 @@
     "stack:down": "docker compose down -v",
     "stack:logs": "docker compose logs -f",
     "stack:scale-workers": "docker compose up -d --scale worker=3",
-    "demo:seed": "node services/app-tier/dist/scripts/seed.js",
+    "demo:seed": "node tests/scripts/demo-seed.js",
     "demo:400-burst": "node tests/scripts/http400-burst.js"
   },
   "devDependencies": {

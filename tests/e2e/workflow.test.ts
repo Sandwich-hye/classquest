@@ -5,21 +5,25 @@
  *   plus induced failure -> retries -> failed -> native SQS redrive to the DLQ,
  *   and the HTTP-400 burst -> alarm.
  *
- * Requires `npm run stack:up`. Skips cleanly when the stack is down.
+ * Requires the full Docker stack (`docker compose up -d --build`). Reported as
+ * SKIPPED — not passed — when it is not reachable; setup failures fail it.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SQSClient, GetQueueUrlCommand, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk/client-sqs';
-import { webTierUp, appTierUp, localstackUp, urls } from '../helpers/infra.js';
+import { stackAvailable, urls } from '../helpers/infra.js';
 
 const WEB = urls.WEB_TIER;
-let up = false;
+const available = await stackAvailable('E2E tests (tests/e2e)', ['webTier', 'appTier', 'localstack']);
 let token = '';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- loosely typed JSON from the live API
+type Json = Record<string, any>;
 
 async function api(path: string, init?: RequestInit) {
   return fetch(`${WEB}/api${path}`, init);
 }
 
-async function poll(path: string, token: string, pred: (b: any) => boolean, tries = 30, delay = 2000) {
+async function poll(path: string, token: string, pred: (b: Json) => boolean, tries = 30, delay = 2000) {
   for (let i = 0; i < tries; i++) {
     const r = await api(path, { headers: { Authorization: `Bearer ${token}` } });
     if (r.ok) {
@@ -57,23 +61,21 @@ async function findInDlq(jobId: string, tries = 30, delayMs = 2000): Promise<boo
   return false;
 }
 
-beforeAll(async () => {
-  up = (await webTierUp()) && (await appTierUp());
-  if (up) {
+describe.skipIf(!available)('E2E: primary workflow via the Web Tier (live stack)', () => {
+  beforeAll(async () => {
     // Demo users exist from App Tier startup (DEMO_MODE); seeding needs a token.
     const login = await api('/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'teacher@classquest.example', password: 'DemoTeacher123!' }),
     });
-    if (login.ok) token = (await login.json()).token;
-    if (token) await api('/demo/seed', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-  }
-}, 60_000);
+    expect(login.status, 'teacher login').toBe(200);
+    token = (await login.json()).token;
+    const seed = await api('/demo/seed', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    expect(seed.status, 'demo seed').toBe(200);
+  }, 60_000);
 
-describe('E2E: primary workflow via the Web Tier', () => {
   it('uploads an asset and processes it to completion, then retrieves it', async () => {
-    if (!up || !token) return expect(true).toBe(true);
 
     const form = new FormData();
     form.append('title', 'E2E — sample document');
@@ -101,7 +103,6 @@ describe('E2E: primary workflow via the Web Tier', () => {
   }, 90_000);
 
   it('induced failure: 3 attempts -> failed, then SQS redrive moves the message to the DLQ', async () => {
-    if (!up || !token) return expect(true).toBe(true);
     const r = await api('/demo/induce-failure', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
@@ -116,12 +117,10 @@ describe('E2E: primary workflow via the Web Tier', () => {
     expect(job?.attempts).toBe(3);
 
     // ...so on the next receive SQS's native redrive policy moves it to the DLQ.
-    if (!(await localstackUp())) return;
     expect(await findInDlq(jobId)).toBe(true);
   }, 180_000);
 
   it('HTTP-400 burst exceeds the >50/min threshold (report 2.2.8)', async () => {
-    if (!up || !token) return expect(true).toBe(true);
     // Fire >50 intentional 400s through the edge in under a minute.
     await Promise.all(
       Array.from({ length: 60 }, () => api('/demo/bad-request', { method: 'POST' }).catch(() => undefined)),
