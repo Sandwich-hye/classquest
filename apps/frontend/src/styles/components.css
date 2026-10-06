@@ -537,3 +537,58 @@ input[type='file'].cq-visually-hidden:focus-visible + .cq-dropzone { border-colo
 .cq-demo__result--danger { background: var(--cq-danger-tint); color: var(--cq-danger-strong); }
 .cq-demo__extra { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
 .cq-demo__extra .cq-small { display: flex; align-items: center; gap: 6px; }
+
+/* =====================================================================
+ * Student Home / My Progress / Teacher Dashboard
+ * ===================================================================== */
+.cq-home-top { display: grid; gap: var(--cq-space-5); grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); margin-bottom: var(--cq-space-6); align-items: stretch; }
+@media (max-width: 1100px) { .cq-home-top { grid-template-columns: 1fr; } }
+.cq-continue__item { display: flex; gap: var(--cq-space-5); align-items: stretch; }
+.cq-continue__thumb { display: flex; align-items: center; justify-content: center; flex: 0 0 180px; min-height: 150px; border-radius: var(--cq-radius-md); }
+.cq-continue__body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cq-continue__title { font: 700 22px/1.25 var(--cq-font); letter-spacing: -0.01em; }
+@media (max-width: 640px) { .cq-continue__item { flex-direction: column; } .cq-continue__thumb { flex-basis: 120px; } }
+.cq-home-summary { display: flex; flex-direction: column; gap: var(--cq-space-3); }
+.cq-home-summary__coverage { display: flex; flex-direction: column; gap: 6px; margin: var(--cq-space-2) 0; }
+.cq-mini-stats--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cq-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--cq-space-3); margin-bottom: var(--cq-space-4); }
+
+.cq-steps { display: grid; gap: var(--cq-space-4); grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; padding: 0; list-style: none; }
+@media (max-width: 900px) { .cq-steps { grid-template-columns: 1fr; } }
+.cq-steps__item { display: flex; gap: 12px; align-items: flex-start; }
+.cq-steps__item strong { display: block; margin-bottom: 2px; }
+.cq-steps__num {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: var(--cq-radius-pill);
+  background: var(--cq-surface); color: var(--cq-callout-strong); font-weight: 800;
+}
+
+.cq-scope-note {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: var(--cq-space-5);
+  padding: 12px 16px; border-radius: var(--cq-radius-md);
+  background: var(--cq-callout); border: 1px solid var(--cq-callout-border); color: var(--cq-callout-strong); font-size: 13.5px;
+}
+.cq-scope-note svg { flex-shrink: 0; margin-top: 2px; }
+.cq-kpi--text { font-size: 24px; }
+
+.cq-type-progress { display: flex; flex-direction: column; gap: var(--cq-space-5); margin: 0; padding: 0; list-style: none; }
+.cq-type-progress__row { display: flex; flex-direction: column; gap: 10px; }
+.cq-type-progress__head { display: flex; align-items: center; gap: 10px; }
+.cq-type-progress__label { flex: 1; font-weight: 600; }
+.cq-type-progress__count { font-weight: 700; }
+
+a.cq-type-tile { color: inherit; text-decoration: none; }
+a.cq-type-tile:hover { border-color: var(--cq-primary); background: var(--cq-primary-tint); color: inherit; }
+a.cq-btn { text-decoration: none; }
+a.cq-btn--primary, a.cq-btn--primary:hover { color: #fff; }
+a.cq-btn--secondary:hover { color: var(--cq-primary-strong); }
+
+.cq-table-wrap { overflow-x: auto; }
+.cq-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.cq-table th {
+  text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--cq-border); white-space: nowrap;
+  font: var(--cq-text-eyebrow); letter-spacing: 0.06em; text-transform: uppercase; color: var(--cq-text-muted);
+}
+.cq-table td { padding: 12px; border-bottom: 1px solid var(--cq-border); vertical-align: middle; }
+.cq-table tr:last-child td { border-bottom: 0; }
+.cq-table__title { display: flex; align-items: center; gap: 10px; font-weight: 600; min-width: 220px; }

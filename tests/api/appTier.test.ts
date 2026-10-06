@@ -91,6 +91,27 @@ describe('App Tier API', () => {
     expect(job.status).toBe(403);
   });
 
+  it('a student open is recorded and reflected in /me/progress', async () => {
+    if (!up || !studentToken || !seeded) return expect(true).toBe(true);
+    const auth = { Authorization: `Bearer ${studentToken}` };
+    const { assets } = await (await fetch(`${BASE}/assets`, { headers: auth })).json();
+    if (assets.length === 0) return expect(true).toBe(true); // nothing processed yet
+    const before = await (await fetch(`${BASE}/me/progress`, { headers: auth })).json();
+    const open = await fetch(`${BASE}/assets/${assets[0].id}`, { headers: auth });
+    expect(open.status).toBe(200);
+    const after = await (await fetch(`${BASE}/me/progress`, { headers: auth })).json();
+    expect(after.recent[0].asset.id).toBe(assets[0].id);
+    expect(after.opened).toBeGreaterThanOrEqual(before.opened);
+    expect(after.opened).toBeLessThanOrEqual(after.available);
+    expect(after.byType).toHaveProperty('document');
+  });
+
+  it('/me/progress is student-only', async () => {
+    if (!up || !teacherToken) return expect(true).toBe(true);
+    const r = await fetch(`${BASE}/me/progress`, { headers: { Authorization: `Bearer ${teacherToken}` } });
+    expect(r.status).toBe(403);
+  });
+
   it('demo management endpoints require a teacher/admin token', async () => {
     if (!up) return expect(true).toBe(true);
     expect((await post('/demo/seed')).status).toBe(401);

@@ -18,6 +18,12 @@ const fx = vi.hoisted(() => {
     assets: { c1: asset('c1', 'completed'), q1: asset('q1', 'queued'), p1: asset('p1', 'processing'), f1: asset('f1', 'failed') } as Record<string, ReturnType<typeof asset>>,
     listFilter: undefined as unknown,
     presign: vi.fn(async (key: string) => `http://s3/${key}?sig`),
+    recordOpen: vi.fn(async (_userId: string, _assetId: string) => {}),
+    progressFor: vi.fn(async (userId: string) => ({
+      available: 4, opened: 1, coverage: 0.25, lastOpenedAt: '2026-10-06T00:00:00.000Z',
+      byType: { document: { opened: 1, available: 2 }, book: { opened: 0, available: 1 }, video: { opened: 0, available: 1 } },
+      recent: [], userId,
+    })),
     publish: vi.fn(async (i: { title: string }) => ({ asset: { id: 'new', status: 'queued', title: i.title }, jobId: 'jnew' })),
   };
 });
@@ -36,6 +42,7 @@ vi.mock('@classquest/shared', async (importOriginal) => {
         return Object.values(fx.assets).filter((a) => !filter?.status || a.status === filter.status);
       },
     },
+    accessRepo: { recordOpen: fx.recordOpen, progressFor: fx.progressFor },
     jobRepo: {
       findById: async (id: string) => ({ id, assetId: 'q1', state: 'queued', attempts: 0, lastError: null,
         submittedAt: '', startedAt: null, finishedAt: null }),
@@ -71,6 +78,9 @@ beforeEach(() => {
   app = createApp();
   fx.presign.mockClear();
   fx.publish.mockClear();
+  fx.recordOpen.mockReset();
+  fx.recordOpen.mockImplementation(async () => {});
+  fx.progressFor.mockClear();
 });
 
 describe('asset visibility', () => {
@@ -102,6 +112,56 @@ describe('asset visibility', () => {
   it('teachers and admins can open unpublished assets', async () => {
     expect((await request(app).get('/assets/q1').set('Authorization', teacher)).status).toBe(200);
     expect((await request(app).get('/assets/f1').set('Authorization', admin)).status).toBe(200);
+  });
+});
+
+describe('resource-open tracking (GET /assets/:id)', () => {
+  it('records a student open of a completed asset after the presigned URL is issued', async () => {
+    const r = await request(app).get('/assets/c1').set('Authorization', student);
+    expect(r.status).toBe(200);
+    expect(fx.recordOpen).toHaveBeenCalledWith('student-id', 'c1');
+  });
+
+  it('does not record opens by teachers or admins', async () => {
+    await request(app).get('/assets/c1').set('Authorization', teacher);
+    await request(app).get('/assets/q1').set('Authorization', admin);
+    expect(fx.recordOpen).not.toHaveBeenCalled();
+  });
+
+  it('does not record refused requests (unpublished asset, unknown asset)', async () => {
+    expect((await request(app).get('/assets/q1').set('Authorization', student)).status).toBe(404);
+    expect((await request(app).get('/assets/nope').set('Authorization', student)).status).toBe(404);
+    expect(fx.recordOpen).not.toHaveBeenCalled();
+  });
+
+  it('does not record when the presigned URL could not be generated', async () => {
+    fx.presign.mockRejectedValueOnce(new Error('S3 down'));
+    expect((await request(app).get('/assets/c1').set('Authorization', student)).status).toBe(500);
+    expect(fx.recordOpen).not.toHaveBeenCalled();
+  });
+
+  it('a tracking failure never blocks access', async () => {
+    fx.recordOpen.mockRejectedValueOnce(new Error('db write failed'));
+    const r = await request(app).get('/assets/c1').set('Authorization', student);
+    expect(r.status).toBe(200);
+    expect(r.body.downloadUrl).toContain('documents/c1');
+  });
+});
+
+describe('GET /me/progress', () => {
+  it('returns the student’s own aggregate', async () => {
+    const r = await request(app).get('/me/progress').set('Authorization', student);
+    expect(r.status).toBe(200);
+    expect(fx.progressFor).toHaveBeenCalledWith('student-id');
+    expect(r.body).toMatchObject({ available: 4, opened: 1, coverage: 0.25 });
+    expect(Object.keys(r.body)).not.toEqual(expect.arrayContaining(['grade', 'score', 'mastery']));
+  });
+
+  it('is student-only', async () => {
+    expect((await request(app).get('/me/progress')).status).toBe(401);
+    expect((await request(app).get('/me/progress').set('Authorization', teacher)).status).toBe(403);
+    expect((await request(app).get('/me/progress').set('Authorization', admin)).status).toBe(403);
+    expect(fx.progressFor).not.toHaveBeenCalled();
   });
 });
 

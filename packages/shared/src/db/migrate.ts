@@ -60,6 +60,20 @@ const STATEMENTS = [
     INDEX idx_metrics_ts (ts),
     INDEX idx_metrics_status (status_code)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+  // Which completed resources each student has opened (presigned URL issued).
+  // Records access only — not completion, grades or time spent.
+  `CREATE TABLE IF NOT EXISTS resource_access (
+    user_id         CHAR(36)  NOT NULL,
+    asset_id        CHAR(36)  NOT NULL,
+    first_opened_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_opened_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    open_count      INT       NOT NULL DEFAULT 1,
+    PRIMARY KEY (user_id, asset_id),
+    INDEX idx_access_user_last (user_id, last_opened_at),
+    CONSTRAINT fk_access_user FOREIGN KEY (user_id) REFERENCES users(id),
+    CONSTRAINT fk_access_asset FOREIGN KEY (asset_id) REFERENCES assets(id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
 export async function migrate(pool: Pool = getPool()): Promise<void> {

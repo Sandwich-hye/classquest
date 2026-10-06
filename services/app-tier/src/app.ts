@@ -10,6 +10,7 @@ import { jobsRouter } from './routes/jobs.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { healthRouter } from './routes/health.js';
 import { demoRouter } from './routes/demo.js';
+import { meRouter } from './routes/me.js';
 
 export function createApp(): Express {
   const app = express();
@@ -32,6 +33,7 @@ export function createApp(): Express {
   app.use('/assets', assetsRouter);
   app.use('/jobs', jobsRouter);
   app.use('/dashboard', dashboardRouter);
+  app.use('/me', meRouter);
 
   // Demo mode (brief §18): only mounted when DEMO_MODE is enabled; otherwise
   // /demo/* falls through to 404.

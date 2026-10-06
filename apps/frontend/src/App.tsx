@@ -7,12 +7,13 @@ import { Login } from './pages/Login';
 import { Library } from './pages/Library';
 import { Publish } from './pages/Publish';
 import { Operations } from './pages/Operations';
-import { Placeholder } from './pages/Placeholder';
+import { StudentHome } from './pages/StudentHome';
+import { MyProgress } from './pages/MyProgress';
+import { TeacherDashboard } from './pages/TeacherDashboard';
 
 /**
  * Routing. Each authenticated route is guarded by the roles declared in
- * navigation.ts. Home, My Progress and the teacher Dashboard are placeholders
- * until their phase.
+ * navigation.ts.
  */
 export function App() {
   const { session, status } = useAuth();
@@ -41,7 +42,7 @@ export function App() {
           path={ROUTES.home.path}
           element={
             <RequireRole roles={ROUTES.home.roles}>
-              <Placeholder title="Home" eyebrow="Learning Portal" description="Your starting point: continue where you left off and see what's new in the library." />
+              <StudentHome />
             </RequireRole>
           }
         />
@@ -49,7 +50,7 @@ export function App() {
           path={ROUTES.progress.path}
           element={
             <RequireRole roles={ROUTES.progress.roles}>
-              <Placeholder title="My Progress" eyebrow="Learning Portal" description="A simple view of the library resources you have opened." />
+              <MyProgress />
             </RequireRole>
           }
         />
@@ -57,7 +58,7 @@ export function App() {
           path={ROUTES.dashboard.path}
           element={
             <RequireRole roles={ROUTES.dashboard.roles}>
-              <Placeholder title="Dashboard" eyebrow="Teacher Portal" description="An overview of your published resources and how students are using them." />
+              <TeacherDashboard />
             </RequireRole>
           }
         />

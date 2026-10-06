@@ -276,6 +276,98 @@ export const jobRepo = {
   },
 };
 
+// ---------- resource access (student opens) ----------
+export interface TypeCounts {
+  opened: number;
+  available: number;
+}
+
+export interface AccessEntry {
+  asset: Asset;
+  firstOpenedAt: string;
+  lastOpenedAt: string;
+  openCount: number;
+}
+
+export interface StudentProgress {
+  /** Completed resources currently in the library. */
+  available: number;
+  /** Distinct completed resources this student has opened. */
+  opened: number;
+  /** opened / available (0 when nothing is available). */
+  coverage: number;
+  lastOpenedAt: string | null;
+  byType: Record<AssetType, TypeCounts>;
+  recent: AccessEntry[];
+}
+
+export const accessRepo = {
+  /** Record one open: first open inserts, later opens bump the count and time. */
+  async recordOpen(userId: string, assetId: string): Promise<void> {
+    await getPool().query(
+      `INSERT INTO resource_access (user_id, asset_id) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE open_count = open_count + 1, last_opened_at = CURRENT_TIMESTAMP`,
+      [userId, assetId],
+    );
+  },
+
+  /**
+   * Aggregate for GET /me/progress. Only currently completed assets count on
+   * both sides, so `opened` can never exceed `available`.
+   */
+  async progressFor(userId: string, recentLimit = 6): Promise<StudentProgress> {
+    const pool = getPool();
+    const [availRows] = await pool.query<RowDataPacket[]>(
+      `SELECT type, COUNT(*) AS c FROM assets WHERE status = 'completed' GROUP BY type`,
+    );
+    const [openedRows] = await pool.query<RowDataPacket[]>(
+      `SELECT a.type, COUNT(*) AS c, MAX(ra.last_opened_at) AS last
+       FROM resource_access ra JOIN assets a ON a.id = ra.asset_id
+       WHERE ra.user_id = ? AND a.status = 'completed'
+       GROUP BY a.type`,
+      [userId],
+    );
+    const [recentRows] = await pool.query<RowDataPacket[]>(
+      `SELECT a.*, ra.first_opened_at AS ra_first, ra.last_opened_at AS ra_last, ra.open_count AS ra_count
+       FROM resource_access ra JOIN assets a ON a.id = ra.asset_id
+       WHERE ra.user_id = ? AND a.status = 'completed'
+       ORDER BY ra.last_opened_at DESC
+       LIMIT ?`,
+      [userId, recentLimit],
+    );
+
+    const byType: Record<AssetType, TypeCounts> = {
+      document: { opened: 0, available: 0 },
+      book: { opened: 0, available: 0 },
+      video: { opened: 0, available: 0 },
+    };
+    for (const r of availRows) if (r.type in byType) byType[r.type as AssetType].available = Number(r.c);
+    let last: Date | null = null;
+    for (const r of openedRows) {
+      if (r.type in byType) byType[r.type as AssetType].opened = Number(r.c);
+      const d = r.last ? new Date(r.last) : null;
+      if (d && (!last || d > last)) last = d;
+    }
+    const types = Object.values(byType);
+    const available = types.reduce((n, t) => n + t.available, 0);
+    const opened = types.reduce((n, t) => n + t.opened, 0);
+
+    return {
+      available,
+      opened,
+      coverage: available > 0 ? Math.round((opened / available) * 10_000) / 10_000 : 0,
+      lastOpenedAt: last ? last.toISOString() : null,
+      byType,
+      recent: recentRows.map((r) => ({
+        asset: mapAsset(r),
+        firstOpenedAt: new Date(r.ra_first).toISOString(),
+        lastOpenedAt: new Date(r.ra_last).toISOString(),
+        openCount: Number(r.ra_count),
+      })),
+    };
+  },
+};
+
 // ---------- request metrics (local mirror of CloudWatch) ----------
 export const metricsRepo = {
   async record(input: {

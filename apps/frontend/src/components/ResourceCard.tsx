@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { api, type Asset } from '../api';
+import type { Asset } from '../api';
+import { useOpenResource } from '../lib/openResource';
 import { fileKind, formatBytes, formatDate, TYPE_LABEL } from '../lib/assets';
 import { Badge, Button, Icon, STATUS_TONE } from './ui';
 
@@ -7,6 +7,8 @@ interface ResourceCardProps {
   asset: Asset;
   /** Teachers/admins see pipeline status and S3 storage tier. */
   showPipeline: boolean;
+  /** Called after the presigned URL was issued (e.g. to refresh progress). */
+  onOpened?: (assetId: string) => void;
 }
 
 /**
@@ -14,32 +16,11 @@ interface ResourceCardProps {
  * flag, created date, size, and — for staff — status and storage tier. The
  * thumbnail is a type-coloured placeholder (no real thumbnails exist).
  */
-export function ResourceCard({ asset, showPipeline }: ResourceCardProps) {
-  const [opening, setOpening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function ResourceCard({ asset, showPipeline, onOpened }: ResourceCardProps) {
+  const { open, openingId, errorId } = useOpenResource(onOpened);
+  const opening = openingId === asset.id;
+  const error = errorId === asset.id ? 'Could not open this resource. Please try again.' : null;
   const ready = asset.status === 'completed';
-
-  async function open() {
-    setOpening(true);
-    setError(null);
-    // Open the tab synchronously (inside the click) so popup blockers allow
-    // it, then point it at the presigned URL once the API returns.
-    const tab = window.open('about:blank', '_blank');
-    try {
-      const { downloadUrl } = await api.getAsset(asset.id);
-      if (tab) {
-        tab.opener = null;
-        tab.location.href = downloadUrl;
-      } else {
-        window.location.assign(downloadUrl);
-      }
-    } catch {
-      tab?.close();
-      setError('Could not open this resource. Please try again.');
-    } finally {
-      setOpening(false);
-    }
-  }
 
   const unavailableLabel =
     asset.status === 'failed' ? 'Processing failed' : asset.status === 'processing' ? 'Processing…' : 'Waiting to process';
@@ -79,7 +60,7 @@ export function ResourceCard({ asset, showPipeline }: ResourceCardProps) {
             block
             variant={ready ? 'primary' : 'secondary'}
             iconRight={ready ? 'external' : undefined}
-            onClick={open}
+            onClick={() => void open(asset.id)}
             disabled={!ready || opening}
             title={ready ? 'Open via a time-limited S3 link' : 'Available once processing completes'}
           >

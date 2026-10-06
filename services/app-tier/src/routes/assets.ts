@@ -14,6 +14,8 @@ import {
   assetTypeSchema,
   isContentTypeAllowed,
   assetRepo,
+  accessRepo,
+  createLogger,
   requireAuth,
   requireRole,
   type Asset,
@@ -25,6 +27,7 @@ import { storage, metrics, config } from '../services.js';
 import { publishAsset } from '../publish.js';
 
 export const assetsRouter = Router();
+const log = createLogger('app-tier');
 
 /** Students may only see published (processing completed) assets. */
 function visibleTo(user: JwtPayload | undefined, asset: Asset): boolean {
@@ -125,6 +128,14 @@ assetsRouter.get('/:id', requireAuth, async (req: Request, res: Response, next: 
       /* object may not exist yet in rare races; fall back to stored value */
     }
     const downloadUrl = await storage.getPresignedUrl(asset.s3Key);
+    // Student opens feed My Progress. Recorded only after the presigned URL
+    // was issued (students can only reach here for completed assets).
+    // Best-effort: a tracking failure must not block access.
+    if (req.user?.role === 'student') {
+      await accessRepo
+        .recordOpen(req.user.sub, asset.id)
+        .catch((err: Error) => log.warn({ assetId: asset.id, err: err.message }, 'resource access not recorded'));
+    }
     res.json({ asset: { ...asset, storageClass: currentTier }, downloadUrl });
   } catch (err) {
     next(err);

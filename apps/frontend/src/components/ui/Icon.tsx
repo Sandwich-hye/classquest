@@ -37,6 +37,7 @@ const PATHS: Record<IconName, string[]> = {
   zap: ['M13 2 4 14h7l-1 8 9-12h-7Z'],
   snowflake: ['M12 2v20', 'M4.9 7l14.2 10', 'M4.9 17l14.2-10', 'M9 4l3 3 3-3', 'M9 20l3-3 3 3'],
   terminal: ['M4 17l6-6-6-6', 'M12 19h8'],
+  info: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 11v5', 'M12 8h.01'],
 };
 
 export function Icon({ name, size = 20, className }: { name: IconName; size?: number; className?: string }) {

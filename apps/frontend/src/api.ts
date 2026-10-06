@@ -85,6 +85,11 @@ export const api = {
     return request<{ assetId: string; jobId: string; status: string }>('/assets', { method: 'POST', body: form });
   },
 
+  /** Student only: which completed resources this student has opened. */
+  progress() {
+    return request<StudentProgress>('/me/progress');
+  },
+
   getJob(id: string) {
     return request<JobStatus>(`/jobs/${id}`);
   },
@@ -155,6 +160,22 @@ export interface Asset {
   status: 'submitted' | 'queued' | 'processing' | 'completed' | 'failed';
   isDemo: boolean;
   createdAt: string;
+}
+
+export interface TypeCounts {
+  opened: number;
+  available: number;
+}
+
+/** GET /me/progress — resource access only (no grades, mastery or completion). */
+export interface StudentProgress {
+  available: number;
+  opened: number;
+  /** opened / available, 0–1. */
+  coverage: number;
+  lastOpenedAt: string | null;
+  byType: Record<Asset['type'], TypeCounts>;
+  recent: Array<{ asset: Asset; firstOpenedAt: string; lastOpenedAt: string; openCount: number }>;
 }
 
 export interface JobStatus {
