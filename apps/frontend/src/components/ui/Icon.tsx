@@ -26,6 +26,17 @@ const PATHS: Record<IconName, string[]> = {
   x: ['M6 6l12 12', 'M18 6 6 18'],
   alert: ['M12 3 2 21h20Z', 'M12 10v5', 'M12 18h.01'],
   refresh: ['M20 11a8 8 0 0 0-14.9-4', 'M4 4v4h4', 'M4 13a8 8 0 0 0 14.9 4', 'M20 20v-4h-4'],
+  database: ['M12 8c4.4 0 8-1.3 8-3s-3.6-3-8-3-8 1.3-8 3 3.6 3 8 3Z', 'M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5', 'M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'],
+  archive: ['M3 4h18v4H3z', 'M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8', 'M10 12h4'],
+  queue: ['M4 6h16', 'M4 12h16', 'M4 18h10'],
+  server: ['M4 4h16v6H4z', 'M4 14h16v6H4z', 'M8 7h.01', 'M8 17h.01'],
+  globe: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M3 12h18', 'M12 3a14 14 0 0 1 0 18', 'M12 3a14 14 0 0 0 0 18'],
+  cpu: ['M7 7h10v10H7z', 'M10 3v4', 'M14 3v4', 'M10 17v4', 'M14 17v4', 'M3 10h4', 'M3 14h4', 'M17 10h4', 'M17 14h4'],
+  clock: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 7v5l3 2'],
+  'arrow-right': ['M5 12h14', 'M13 6l6 6-6 6'],
+  zap: ['M13 2 4 14h7l-1 8 9-12h-7Z'],
+  snowflake: ['M12 2v20', 'M4.9 7l14.2 10', 'M4.9 17l14.2-10', 'M9 4l3 3 3-3', 'M9 20l3-3 3 3'],
+  terminal: ['M4 17l6-6-6-6', 'M12 19h8'],
 };
 
 export function Icon({ name, size = 20, className }: { name: IconName; size?: number; className?: string }) {

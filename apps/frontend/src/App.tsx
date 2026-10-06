@@ -6,13 +6,13 @@ import { RequireRole, DefaultRedirect } from './routes/RequireRole';
 import { Login } from './pages/Login';
 import { Library } from './pages/Library';
 import { Publish } from './pages/Publish';
-import { Dashboard as OperationsPage } from './pages/Dashboard';
+import { Operations } from './pages/Operations';
 import { Placeholder } from './pages/Placeholder';
 
 /**
  * Routing. Each authenticated route is guarded by the roles declared in
- * navigation.ts. The ops Dashboard is mounted as-is until its redesign phase;
- * Home, My Progress and the teacher Dashboard are placeholders.
+ * navigation.ts. Home, My Progress and the teacher Dashboard are placeholders
+ * until their phase.
  */
 export function App() {
   const { session, status } = useAuth();
@@ -81,7 +81,7 @@ export function App() {
           path={ROUTES.operations.path}
           element={
             <RequireRole roles={ROUTES.operations.roles}>
-              <OperationsPage />
+              <Operations />
             </RequireRole>
           }
         />

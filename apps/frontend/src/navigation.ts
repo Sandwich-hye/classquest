@@ -8,7 +8,8 @@ export type Role = 'student' | 'teacher' | 'admin';
 export type IconName =
   | 'home' | 'library' | 'progress' | 'dashboard' | 'publish' | 'operations'
   | 'bell' | 'search' | 'logout' | 'chevron-down' | 'inbox' | 'lock'
-  | 'document' | 'book' | 'video' | 'external' | 'upload-cloud' | 'check' | 'x' | 'alert' | 'refresh';
+  | 'document' | 'book' | 'video' | 'external' | 'upload-cloud' | 'check' | 'x' | 'alert' | 'refresh'
+  | 'database' | 'archive' | 'queue' | 'server' | 'globe' | 'cpu' | 'clock' | 'arrow-right' | 'zap' | 'snowflake' | 'terminal';
 
 export interface RouteDef {
   path: string;

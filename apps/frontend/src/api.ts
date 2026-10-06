@@ -24,7 +24,7 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   onUnauthorized = handler;
 }
 
-async function handle<T>(res: Response, sentToken: boolean): Promise<T> {
+async function handle<T>(res: Response, sentToken: boolean, okStatuses: number[] = []): Promise<T> {
   const text = await res.text();
   let body: Record<string, unknown> = {};
   try {
@@ -32,7 +32,7 @@ async function handle<T>(res: Response, sentToken: boolean): Promise<T> {
   } catch {
     body = {};
   }
-  if (!res.ok) {
+  if (!res.ok && !okStatuses.includes(res.status)) {
     // Only a request that carried a token can mean "session expired"; a 401
     // from /auth/login is just wrong credentials.
     if (res.status === 401 && sentToken) onUnauthorized?.();
@@ -42,12 +42,20 @@ async function handle<T>(res: Response, sentToken: boolean): Promise<T> {
   return body as T;
 }
 
-/** Single request helper: attaches the bearer token unless `auth: false`. */
-async function request<T>(path: string, init: RequestInit = {}, opts: { auth?: boolean } = {}): Promise<T> {
+/**
+ * Single request helper: attaches the bearer token unless `auth: false`.
+ * `okStatuses` lists non-2xx statuses whose body is still a valid result
+ * (e.g. /health answers 503 with a full report when a core service is down).
+ */
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  opts: { auth?: boolean; okStatuses?: number[] } = {},
+): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) };
   const auth = opts.auth !== false ? authHeader() : {};
   const res = await fetch(`${BASE}${path}`, { ...init, headers: { ...headers, ...auth } });
-  return handle<T>(res, 'Authorization' in auth);
+  return handle<T>(res, 'Authorization' in auth, opts.okStatuses);
 }
 
 export const api = {
@@ -85,8 +93,9 @@ export const api = {
     return request<DashboardMetrics>('/dashboard/metrics');
   },
 
+  /** Resolves with the health report for both 200 (healthy/degraded-observability) and 503 (degraded). */
   health() {
-    return request<HealthStatus>('/health', {}, { auth: false });
+    return request<HealthStatus>('/health', {}, { auth: false, okStatuses: [503] });
   },
 
   // --- demo mode (teacher/admin token required) ---
@@ -94,19 +103,34 @@ export const api = {
     return request<DemoSeedResult>('/demo/seed', { method: 'POST' });
   },
   demoInduceFailure() {
-    return request<{ assetId: string; jobId: string; maxAttempts: number }>('/demo/induce-failure', { method: 'POST' });
+    return request<{ message: string; assetId: string; jobId: string; maxAttempts: number }>('/demo/induce-failure', {
+      method: 'POST',
+    });
   },
   demoLifecycleSimulate() {
-    return request<{ transitionedCount: number; transitioned: string[] }>('/demo/lifecycle-simulate', { method: 'POST' });
+    return request<{ message: string; transitionedCount: number; transitioned: string[] }>('/demo/lifecycle-simulate', {
+      method: 'POST',
+    });
   },
-  /** Fire N intentional 400s through the edge to trip the HTTP-400 alarm (unauthenticated by design). */
-  async demo400Burst(count = 60): Promise<number> {
-    let sent = 0;
-    const batch = Array.from({ length: count }, () =>
-      fetch(`${BASE}/demo/bad-request`, { method: 'POST' }).then(() => { sent += 1; }).catch(() => undefined),
+  /**
+   * Fire N intentional 400s through the Web Tier (unauthenticated by design,
+   * so they are 400s rather than 401s). Reports how many completed and how
+   * many actually came back as 400 (e.g. the edge rate limiter returns 429).
+   */
+  async demo400Burst(count = 60): Promise<{ requested: number; completed: number; got400: number }> {
+    let completed = 0;
+    let got400 = 0;
+    await Promise.all(
+      Array.from({ length: count }, () =>
+        fetch(`${BASE}/demo/bad-request`, { method: 'POST' })
+          .then((r) => {
+            completed += 1;
+            if (r.status === 400) got400 += 1;
+          })
+          .catch(() => undefined),
+      ),
     );
-    await Promise.all(batch);
-    return sent;
+    return { requested: count, completed, got400 };
   },
 };
 
@@ -158,10 +182,13 @@ export interface DashboardMetrics {
 
 export interface HealthStatus {
   tier: string;
-  status: 'healthy' | 'degraded';
+  /** 'degraded-observability': core OK, CloudWatch/SNS down (HTTP 200). 'degraded': a core service down (HTTP 503). */
+  status: 'healthy' | 'degraded-observability' | 'degraded';
   cloudTarget: string;
   region: string;
-  dependencies: Record<string, boolean>;
+  dependencies: Partial<Record<'mysql' | 's3' | 'sqs' | 'cloudwatch' | 'sns', boolean>>;
+  note?: string;
+  timestamp?: string;
 }
 
 export interface DemoSeedResult {

@@ -8,3 +8,4 @@ export { SearchInput } from './SearchInput';
 export { SegmentedControl, type SegmentOption } from './SegmentedControl';
 export { Select, type SelectOption } from './Select';
 export { EmptyState } from './EmptyState';
+export { StatCard, type StatTone } from './StatCard';
