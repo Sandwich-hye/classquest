@@ -15,75 +15,91 @@ function authHeader(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function handle<T>(res: Response): Promise<T> {
+// ---- central 401 handling ----
+// The AuthProvider registers a handler; any authenticated request that comes
+// back 401 (expired/invalid token) ends the session in one place.
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
+async function handle<T>(res: Response, sentToken: boolean): Promise<T> {
   const text = await res.text();
-  const body = text ? JSON.parse(text) : {};
+  let body: Record<string, unknown> = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    body = {};
+  }
   if (!res.ok) {
+    // Only a request that carried a token can mean "session expired"; a 401
+    // from /auth/login is just wrong credentials.
+    if (res.status === 401 && sentToken) onUnauthorized?.();
     const err = (body.error as ApiError) ?? { code: 'ERROR', message: res.statusText };
     throw err;
   }
   return body as T;
 }
 
+/** Single request helper: attaches the bearer token unless `auth: false`. */
+async function request<T>(path: string, init: RequestInit = {}, opts: { auth?: boolean } = {}): Promise<T> {
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) };
+  const auth = opts.auth !== false ? authHeader() : {};
+  const res = await fetch(`${BASE}${path}`, { ...init, headers: { ...headers, ...auth } });
+  return handle<T>(res, 'Authorization' in auth);
+}
+
 export const api = {
-  async login(email: string, password: string) {
-    const res = await fetch(`${BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    return handle<{ token: string; role: string; displayName: string }>(res);
+  login(email: string, password: string) {
+    return request<{ token: string; role: string; displayName: string }>(
+      '/auth/login',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) },
+      { auth: false },
+    );
   },
 
-  async listAssets(type?: string) {
+  /** Validates the stored token; resolves with the server's view of the user. */
+  me() {
+    return request<{ user: SessionUser }>('/auth/me');
+  },
+
+  listAssets(type?: string) {
     const q = type ? `?type=${encodeURIComponent(type)}` : '';
-    const res = await fetch(`${BASE}/assets${q}`, { headers: { ...authHeader() } });
-    return handle<{ assets: Asset[] }>(res);
+    return request<{ assets: Asset[] }>(`/assets${q}`);
   },
 
-  async getAsset(id: string) {
-    const res = await fetch(`${BASE}/assets/${id}`, { headers: { ...authHeader() } });
-    return handle<{ asset: Asset; downloadUrl: string }>(res);
+  getAsset(id: string) {
+    return request<{ asset: Asset; downloadUrl: string }>(`/assets/${id}`);
   },
 
-  async uploadAsset(form: FormData) {
-    const res = await fetch(`${BASE}/assets`, {
-      method: 'POST',
-      headers: { ...authHeader() },
-      body: form,
-    });
-    return handle<{ assetId: string; jobId: string; status: string }>(res);
+  uploadAsset(form: FormData) {
+    return request<{ assetId: string; jobId: string; status: string }>('/assets', { method: 'POST', body: form });
   },
 
-  async getJob(id: string) {
-    const res = await fetch(`${BASE}/jobs/${id}`, { headers: { ...authHeader() } });
-    return handle<JobStatus>(res);
+  getJob(id: string) {
+    return request<JobStatus>(`/jobs/${id}`);
   },
 
-  async dashboard() {
-    const res = await fetch(`${BASE}/dashboard/metrics`, { headers: { ...authHeader() } });
-    return handle<DashboardMetrics>(res);
+  dashboard() {
+    return request<DashboardMetrics>('/dashboard/metrics');
   },
 
-  async health() {
-    const res = await fetch(`${BASE}/health`);
-    return handle<HealthStatus>(res);
+  health() {
+    return request<HealthStatus>('/health', {}, { auth: false });
   },
 
-  // --- demo mode ---
-  async demoSeed() {
-    const res = await fetch(`${BASE}/demo/seed`, { method: 'POST', headers: { ...authHeader() } });
-    return handle<DemoSeedResult>(res);
+  // --- demo mode (teacher/admin token required) ---
+  demoSeed() {
+    return request<DemoSeedResult>('/demo/seed', { method: 'POST' });
   },
-  async demoInduceFailure() {
-    const res = await fetch(`${BASE}/demo/induce-failure`, { method: 'POST', headers: { ...authHeader() } });
-    return handle<{ assetId: string; jobId: string; maxAttempts: number }>(res);
+  demoInduceFailure() {
+    return request<{ assetId: string; jobId: string; maxAttempts: number }>('/demo/induce-failure', { method: 'POST' });
   },
-  async demoLifecycleSimulate() {
-    const res = await fetch(`${BASE}/demo/lifecycle-simulate`, { method: 'POST', headers: { ...authHeader() } });
-    return handle<{ transitionedCount: number; transitioned: string[] }>(res);
+  demoLifecycleSimulate() {
+    return request<{ transitionedCount: number; transitioned: string[] }>('/demo/lifecycle-simulate', { method: 'POST' });
   },
-  /** Fire N intentional 400s through the edge to trip the HTTP-400 alarm. */
+  /** Fire N intentional 400s through the edge to trip the HTTP-400 alarm (unauthenticated by design). */
   async demo400Burst(count = 60): Promise<number> {
     let sent = 0;
     const batch = Array.from({ length: count }, () =>
@@ -95,6 +111,14 @@ export const api = {
 };
 
 // ---- types mirrored from the backend ----
+/** JWT claims returned by GET /auth/me. */
+export interface SessionUser {
+  sub: string;
+  email: string;
+  role: string;
+  displayName: string;
+}
+
 export interface Asset {
   id: string;
   ownerId: string;

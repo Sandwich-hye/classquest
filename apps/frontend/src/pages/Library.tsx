@@ -53,7 +53,7 @@ export function Library() {
       {loading && assets.length === 0 ? (
         <div className="card">Loading…</div>
       ) : assets.length === 0 ? (
-        <div className="card">No assets yet. Ask a teacher to publish one, or seed demo data from the login screen.</div>
+        <div className="card">No resources yet. Ask a teacher to publish one, or seed demo data from Operations.</div>
       ) : (
         <div className="grid cols-3">
           {assets.map((a) => (
